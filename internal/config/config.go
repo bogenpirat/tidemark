@@ -11,6 +11,7 @@ type AppConfig struct {
 	Host           string  `json:"host"`
 	Community      string  `json:"community"`
 	Port           uint16  `json:"port"`
+	SNMPVersion    string  `json:"snmpVersion"`
 	InterfaceIndex int     `json:"interfaceIndex"`
 	DownloadOID    string  `json:"downloadOID"`
 	UploadOID      string  `json:"uploadOID"`
@@ -42,6 +43,9 @@ func LoadConfig(filePath string) (*AppConfig, error) {
 
 	if appConfig.Port == 0 {
 		appConfig.Port = 161
+	}
+	if appConfig.SNMPVersion == "" {
+		appConfig.SNMPVersion = "2c"
 	}
 	if appConfig.InterfaceIndex == 0 {
 		appConfig.InterfaceIndex = 1

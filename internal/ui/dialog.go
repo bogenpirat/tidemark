@@ -55,14 +55,15 @@ type settingsDialog struct {
 	closing bool
 	errors  []string
 
-	hosts     widget.Editor
-	community widget.Editor
-	port      widget.Editor
-	ifIndex   widget.Editor
-	dlOID     widget.Editor
-	ulOID     widget.Editor
-	timeoutMs widget.Editor
-	retries   widget.Editor
+	hosts       widget.Editor
+	community   widget.Editor
+	port        widget.Editor
+	snmpVersion widget.Editor
+	ifIndex     widget.Editor
+	dlOID       widget.Editor
+	ulOID       widget.Editor
+	timeoutMs   widget.Editor
+	retries     widget.Editor
 
 	saveBtn   widget.Clickable
 	cancelBtn widget.Clickable
@@ -75,7 +76,7 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.AppConfig) *
 	}
 	d := &settingsDialog{mat: mat, theme: th}
 	for _, ed := range []*widget.Editor{
-		&d.hosts, &d.community, &d.port, &d.ifIndex,
+		&d.hosts, &d.community, &d.port, &d.snmpVersion, &d.ifIndex,
 		&d.dlOID, &d.ulOID, &d.timeoutMs, &d.retries,
 	} {
 		ed.SingleLine = true
@@ -83,6 +84,7 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.AppConfig) *
 	d.hosts.SetText(cfg.Host)
 	d.community.SetText(cfg.Community)
 	d.port.SetText(fmt.Sprintf("%d", cfg.Port))
+	d.snmpVersion.SetText(cfg.SNMPVersion)
 	d.ifIndex.SetText(fmt.Sprintf("%d", cfg.InterfaceIndex))
 	d.dlOID.SetText(cfg.DownloadOID)
 	d.ulOID.SetText(cfg.UploadOID)
@@ -111,6 +113,13 @@ func (d *settingsDialog) validate() (config.AppConfig, []string) {
 		errs = append(errs, "Port: must be 1–65535")
 	} else {
 		cfg.Port = uint16(p)
+	}
+
+	ver := strings.TrimSpace(d.snmpVersion.Text())
+	if ver != "1" && ver != "2c" {
+		errs = append(errs, "SNMP Version: must be \"1\" or \"2c\"")
+	} else {
+		cfg.SNMPVersion = ver
 	}
 
 	if idx, err := strconv.Atoi(strings.TrimSpace(d.ifIndex.Text())); err != nil || idx < 1 {
@@ -189,6 +198,8 @@ func (d *settingsDialog) Layout(gtx layout.Context) dialogAction {
 		layout.Rigid(d.fieldRow("Community", &d.community, "e.g., public")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Port", &d.port, "1–65535")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
+		layout.Rigid(d.fieldRow("SNMP Version", &d.snmpVersion, "1 or 2c")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Interface Index", &d.ifIndex, "e.g., 1")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
@@ -360,7 +371,7 @@ func RunSettingsDialog(mat *material.Theme, cfg config.AppConfig, isDark bool) D
 	win := new(app.Window)
 	win.Option(
 		app.Title("Settings"),
-		app.Size(unit.Dp(520), unit.Dp(460)),
+		app.Size(unit.Dp(520), unit.Dp(493)),
 	)
 
 	d := newSettingsDialog(mat, isDark, cfg)

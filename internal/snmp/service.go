@@ -14,6 +14,12 @@ import (
 	gosnmp "github.com/gosnmp/gosnmp"
 )
 
+// snmpDebugLogger bridges gosnmp's internal trace logging to slog at debug level.
+type snmpDebugLogger struct{}
+
+func (snmpDebugLogger) Print(v ...any)                    { slog.Debug(fmt.Sprint(v...)) }
+func (snmpDebugLogger) Printf(format string, v ...any)    { slog.Debug(fmt.Sprintf(format, v...)) }
+
 const (
 	maxUint64AsFloat = float64(math.MaxUint64)
 	// counter64WrapThreshold detects wrap-around: if the delta is more than half
@@ -38,15 +44,21 @@ func NewService(appConfig *config.AppConfig) *SnmpService {
 func (snmpService *SnmpService) Start(ctx context.Context, out chan<- model.DataPoint) {
 	snmpConfig := snmpService.appConfig
 
+	version := gosnmp.Version2c
+	if snmpConfig.SNMPVersion == "1" {
+		version = gosnmp.Version1
+	}
+
 	snmpSession := &gosnmp.GoSNMP{
 		Target:             snmpConfig.Host,
 		Port:               snmpConfig.Port,
 		Community:          snmpConfig.Community,
-		Version:            gosnmp.Version2c,
+		Version:            version,
 		Timeout:            time.Duration(snmpConfig.TimeoutMs) * time.Millisecond,
 		Retries:            snmpConfig.Retries,
 		MaxOids:            gosnmp.MaxOids,
 		ExponentialTimeout: false,
+		Logger:             gosnmp.NewLogger(snmpDebugLogger{}),
 	}
 
 	if connectError := snmpSession.Connect(); connectError != nil {
@@ -168,11 +180,17 @@ func computeCounterDelta(previousValue, currentValue uint64) float64 {
 	if currentValue >= previousValue {
 		return float64(currentValue - previousValue)
 	}
-	// Counter wrapped around 2^64.
+	// Counter wrapped. Choose the modulus based on value magnitude: if both
+	// values fit in 32 bits it's a Counter32/Integer32 wrap (modulus 2^32),
+	// otherwise Counter64 (modulus 2^64).
+	if previousValue <= math.MaxUint32 && currentValue <= math.MaxUint32 {
+		slog.Warn("32-bit SNMP counter wrap-around detected",
+			"previous", previousValue, "current", currentValue)
+		return float64(math.MaxUint32-previousValue) + float64(currentValue) + 1
+	}
 	slog.Warn("64-bit SNMP counter wrap-around detected",
 		"previous", previousValue, "current", currentValue)
-	wrappedDelta := float64(math.MaxUint64-previousValue) + float64(currentValue) + 1
-	return wrappedDelta
+	return float64(math.MaxUint64-previousValue) + float64(currentValue) + 1
 }
 
 // extractUint64 pulls a Counter64 or Counter32 value from an SNMP variable.
@@ -190,6 +208,15 @@ func extractUint64(variable gosnmp.SnmpPDU) (uint64, error) {
 			return 0, fmt.Errorf("Counter32/Gauge32 value is not uint for OID %s", variable.Name)
 		}
 		return uint64(rawValue), nil
+	case gosnmp.Integer:
+		rawValue, isCorrectType := variable.Value.(int)
+		if !isCorrectType {
+			return 0, fmt.Errorf("Integer value is not int for OID %s", variable.Name)
+		}
+		// Reinterpret the signed 32-bit pattern as unsigned so it behaves like
+		// Counter32: monotonically increasing through 0–4294967295 with no
+		// sign-flip jump at 2^31.
+		return uint64(uint32(rawValue)), nil
 	default:
 		return 0, fmt.Errorf("unexpected SNMP type %v for OID %s", variable.Type, variable.Name)
 	}
