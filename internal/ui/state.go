@@ -3,8 +3,8 @@ package ui
 import (
 	"image"
 
-	"ntg/internal/buffer"
-	"ntg/internal/model"
+	"tidemark/internal/buffer"
+	"tidemark/internal/model"
 )
 
 // AppState holds all mutable UI state. It is owned by the main goroutine and

@@ -6,11 +6,11 @@ import (
 	"os"
 	"sync"
 
-	"ntg/internal/buffer"
-	"ntg/internal/config"
-	"ntg/internal/model"
-	snmpservice "ntg/internal/snmp"
-	"ntg/internal/ui"
+	"tidemark/internal/buffer"
+	"tidemark/internal/config"
+	"tidemark/internal/model"
+	snmpservice "tidemark/internal/snmp"
+	"tidemark/internal/ui"
 
 	"gioui.org/app"
 	"gioui.org/font/gofont"
@@ -31,7 +31,7 @@ func main() {
 	setupLogging()
 
 	if len(os.Args) < 2 {
-		slog.Error("no config file specified", "usage", "ntg.exe <config.json>")
+		slog.Error("no config file specified", "usage", "tidemark.exe <config.json>")
 		os.Exit(1)
 	}
 	configFilePath := os.Args[1]
@@ -72,7 +72,7 @@ func main() {
 		initialHeightDp = defaultWindowHeightDp
 	}
 
-	windowTitle := "NTG — " + appConfig.Host
+	windowTitle := "Tidemark — " + appConfig.Host
 	window := new(app.Window)
 	window.Option(
 		app.Title(windowTitle),

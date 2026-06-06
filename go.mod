@@ -1,4 +1,4 @@
-module ntg
+module tidemark
 
 go 1.26.3
 

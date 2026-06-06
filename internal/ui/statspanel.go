@@ -4,8 +4,8 @@ import (
 	"image"
 	"image/color"
 
-	"ntg/internal/model"
-	"ntg/internal/units"
+	"tidemark/internal/model"
+	"tidemark/internal/units"
 
 	"gioui.org/layout"
 	"gioui.org/op"

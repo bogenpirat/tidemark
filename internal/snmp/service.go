@@ -8,8 +8,8 @@ import (
 	"net"
 	"time"
 
-	"ntg/internal/config"
-	"ntg/internal/model"
+	"tidemark/internal/config"
+	"tidemark/internal/model"
 
 	gosnmp "github.com/gosnmp/gosnmp"
 )

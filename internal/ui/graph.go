@@ -7,8 +7,8 @@ import (
 	"math"
 	"time"
 
-	"ntg/internal/model"
-	"ntg/internal/units"
+	"tidemark/internal/model"
+	"tidemark/internal/units"
 
 	"gioui.org/f32"
 	"gioui.org/layout"

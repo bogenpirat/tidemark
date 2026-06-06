@@ -16,7 +16,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"ntg/internal/config"
+	"tidemark/internal/config"
 )
 
 // DialogResult is the outcome of the settings dialog. FilePath is non-empty
