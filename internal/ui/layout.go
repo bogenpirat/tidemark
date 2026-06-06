@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/io/system"
 	"gioui.org/layout"
@@ -51,6 +52,15 @@ func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
 	for rootLayout.exitItem.Clicked(gtx) {
 		rootLayout.AppState.ContextMenuVisible = false
 		rootLayout.AppState.ExitRequested = true
+	}
+	for {
+		ev, ok := gtx.Source.Event(key.Filter{Name: key.NameEscape})
+		if !ok {
+			break
+		}
+		if ke, ok := ev.(key.Event); ok && ke.State == key.Press {
+			rootLayout.AppState.ExitRequested = true
+		}
 	}
 
 	currentTheme := rootLayout.AppState.CurrentTheme
