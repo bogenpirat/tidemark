@@ -147,6 +147,13 @@ func main() {
 					if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
 						slog.Error("failed to save config", "err", saveErr)
 					}
+					// Restart the SNMP service with the new settings.
+					cancelContext()
+					ctx, cancelContext = context.WithCancel(context.Background())
+					dataBuffer = buffer.New[model.DataPoint](maxBufferSeconds)
+					appState.DataBuffer = dataBuffer
+					go snmpservice.NewService(appConfig).Start(ctx, snmpOutputChannel)
+					window.Option(app.Title("Tidemark — " + appConfig.Host))
 				}
 			default:
 			}

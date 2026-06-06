@@ -215,8 +215,6 @@ func (d *settingsDialog) Layout(gtx layout.Context) dialogAction {
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Max.Y)}
 		}),
-		layout.Rigid(d.noteRow),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(d.buttonRow),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgOuterPadDp)}.Layout),
 	)
