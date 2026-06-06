@@ -109,7 +109,7 @@ func main() {
 	var ops op.Ops
 	for {
 		windowEvent := window.Event()
-		onPlatformEvent(windowEvent)
+		onPlatformEvent(window, windowEvent)
 
 		switch typedEvent := windowEvent.(type) {
 		case app.DestroyEvent:
@@ -143,9 +143,25 @@ func main() {
 					"isError", dataPoint.IsError)
 			}
 
+			if ok, pos := TakeRightClick(); ok {
+				appState.ContextMenuVisible = true
+				appState.ContextMenuPos = pos
+			}
+
 			gtx := app.NewContext(&ops, typedEvent)
 			rootLayout.Layout(gtx)
 			typedEvent.Frame(&ops)
+
+			if appState.ExitRequested {
+				slog.Info("exit via context menu, shutting down")
+				cancelContext()
+				appConfig.WindowWidthDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.X))
+				appConfig.WindowHeightDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.Y))
+				if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
+					slog.Error("failed to save config", "err", saveErr)
+				}
+				os.Exit(0)
+			}
 		}
 	}
 }
