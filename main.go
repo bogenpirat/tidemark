@@ -78,6 +78,7 @@ func main() {
 	window.Option(
 		app.Title(windowTitle),
 		app.Size(unit.Dp(initialWidthDp), unit.Dp(initialHeightDp)),
+		app.Decorated(false),
 	)
 
 	var pendingMu sync.Mutex
