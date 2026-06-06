@@ -1,0 +1,31 @@
+# Compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build output
+/dist/
+/out/
+
+# Temporary files and local notes
+.tmp/
+
+# Go test cache and coverage
+*.test
+*.out
+/coverage.html
+
+# IDE and editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Windows OS files
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Log files
+*.log

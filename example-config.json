@@ -1,0 +1,11 @@
+{
+  "host": "192.168.1.1",
+  "community": "public",
+  "port": 161,
+  "interfaceIndex": 1,
+  "downloadOID": "1.3.6.1.2.1.31.1.1.1.6.1",
+  "uploadOID": "1.3.6.1.2.1.31.1.1.1.10.1",
+  "timeoutMs": 3000,
+  "retries": 1,
+  "historySeconds": 600
+}
