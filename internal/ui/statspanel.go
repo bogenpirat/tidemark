@@ -50,6 +50,9 @@ func (statsPanel *StatsPanel) Layout(gtx layout.Context) layout.Dimensions {
 	currentTheme := statsPanel.AppState.CurrentTheme
 	matTheme := statsPanel.MatTheme
 	snapshot := statsPanel.AppState.DataBuffer.Snapshot()
+	if visibleCount := statsPanel.AppState.GraphWidthPx; visibleCount > 0 && len(snapshot) > visibleCount {
+		snapshot = snapshot[len(snapshot)-visibleCount:]
+	}
 
 	stats := computeStats(snapshot)
 

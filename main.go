@@ -24,6 +24,7 @@ import (
 const (
 	defaultWindowWidthDp  = 1000
 	defaultWindowHeightDp = 500
+	maxBufferSeconds      = 7200 // ring buffer capacity; enough for any realistic screen width
 )
 
 func main() {
@@ -45,17 +46,15 @@ func main() {
 		"host", appConfig.Host,
 		"port", appConfig.Port,
 		"interfaceIndex", appConfig.InterfaceIndex,
-		"historySeconds", appConfig.HistorySeconds,
 		"timeoutMs", appConfig.TimeoutMs,
 	)
 
-	dataBuffer := buffer.New[model.DataPoint](appConfig.HistorySeconds)
+	dataBuffer := buffer.New[model.DataPoint](maxBufferSeconds)
 	appState := &ui.AppState{
-		DataBuffer:     dataBuffer,
-		CurrentTheme:   &ui.DarkTheme,
-		HostLabel:      appConfig.Host,
-		HistorySeconds: appConfig.HistorySeconds,
-		IsDarkTheme:    true,
+		DataBuffer:   dataBuffer,
+		CurrentTheme: &ui.DarkTheme,
+		HostLabel:    appConfig.Host,
+		IsDarkTheme:  true,
 	}
 
 	ctx, cancelContext := context.WithCancel(context.Background())
@@ -110,6 +109,7 @@ func main() {
 	var ops op.Ops
 	for {
 		windowEvent := window.Event()
+		onPlatformEvent(windowEvent)
 
 		switch typedEvent := windowEvent.(type) {
 		case app.DestroyEvent:

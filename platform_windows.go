@@ -45,6 +45,16 @@ func onPlatformEvent(e event.Event) {
 	if !ok || !ev.Valid() {
 		return
 	}
-	style := getWindowLong(ev.HWND)
-	setWindowLong(ev.HWND, style&^wsMaximizeBox)
+	hwnd := ev.HWND
+	// SetWindowLongPtrW uses SendMessage internally, which blocks the calling
+	// goroutine until Gio's Win32 thread processes WM_STYLECHANGED. Calling it
+	// from the main goroutine deadlocks: the main goroutine blocks in SendMessage
+	// while the Win32 thread blocks trying to send a FrameEvent into a full
+	// channel that nobody is reading. Running it on a separate goroutine keeps
+	// the main goroutine free to drain the channel, so the Win32 thread can
+	// return to GetMessage and process the message.
+	go func() {
+		style := getWindowLong(hwnd)
+		setWindowLong(hwnd, style&^wsMaximizeBox)
+	}()
 }

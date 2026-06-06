@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"log/slog"
 
 	"gioui.org/io/system"
 	"gioui.org/layout"
@@ -39,9 +40,17 @@ func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
 	statsLeft := totalWidth - statsPanelWidth
 	graphWidth := statsLeft
 
-	// Register drag regions. The graph area (full height) and the stats panel
-	// top (above the button row) are draggable. The button row at the panel
-	// bottom is intentionally excluded so the button remains clickable.
+	// Compute the plot area width (the number of data points visible this frame).
+	// yAxisLabelWidthDp and rightPaddingDp are defined in graph.go (same package).
+	plotWidth := graphWidth - gtx.Dp(yAxisLabelWidthDp) - gtx.Dp(rightPaddingDp)
+	if plotWidth > 0 && plotWidth != rootLayout.AppState.GraphWidthPx {
+		rootLayout.AppState.GraphWidthPx = plotWidth
+		slog.Info("display window", "dataPoints", plotWidth, "seconds", plotWidth)
+	}
+
+	// Register drag regions before drawing any widgets. The graph area (full
+	// height) and the top of the stats panel (above the button row) are
+	// draggable; the button row at the bottom is excluded so it stays clickable.
 	buttonRowTop := totalHeight - gtx.Dp(toggleButtonHeightDp) - gtx.Dp(12)
 	if graphWidth > 0 {
 		stack := clip.Rect(image.Rect(0, 0, graphWidth, totalHeight)).Push(gtx.Ops)

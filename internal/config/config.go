@@ -16,7 +16,6 @@ type AppConfig struct {
 	UploadOID      string  `json:"uploadOID"`
 	TimeoutMs      int     `json:"timeoutMs"`
 	Retries        int     `json:"retries"`
-	HistorySeconds int     `json:"historySeconds"`
 	WindowWidthDp  float32 `json:"windowWidthDp,omitempty"`
 	WindowHeightDp float32 `json:"windowHeightDp,omitempty"`
 }
@@ -58,12 +57,6 @@ func LoadConfig(filePath string) (*AppConfig, error) {
 	}
 	if appConfig.Retries == 0 {
 		appConfig.Retries = 1
-	}
-	if appConfig.HistorySeconds == 0 {
-		appConfig.HistorySeconds = 600
-	}
-	if appConfig.HistorySeconds > 3600 {
-		appConfig.HistorySeconds = 3600
 	}
 
 	return &appConfig, nil

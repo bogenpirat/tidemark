@@ -49,7 +49,6 @@ func (graph *Graph) Layout(gtx layout.Context) layout.Dimensions {
 	currentTheme := graph.AppState.CurrentTheme
 	matTheme := graph.MatTheme
 	snapshot := graph.AppState.DataBuffer.Snapshot()
-	historySeconds := graph.AppState.HistorySeconds
 	hostLabel := graph.AppState.HostLabel
 
 	totalWidth := gtx.Constraints.Max.X
@@ -90,11 +89,11 @@ func (graph *Graph) Layout(gtx layout.Context) layout.Dimensions {
 	drawYAxis(gtx, matTheme, currentTheme, scaleUnit, niceMaxInUnit, stepSizeInUnit,
 		plotLeft, plotTop, plotRight, plotBottom, plotHeight, tickLength)
 
-	drawXAxis(gtx, matTheme, currentTheme, historySeconds,
+	drawXAxis(gtx, matTheme, currentTheme,
 		plotLeft, plotBottom, plotWidth, tickLength)
 
 	if len(snapshot) > 0 {
-		pixelPoints := buildPixelPoints(snapshot, historySeconds,
+		pixelPoints := buildPixelPoints(snapshot, plotWidth,
 			plotLeft, plotBottom, plotWidth, plotHeight, niceMaxBytesPerSec)
 		drawDataAreas(gtx.Ops, currentTheme, pixelPoints, float32(plotTop), float32(plotBottom))
 	}
@@ -134,12 +133,12 @@ func computeMaximumBytesPerSec(dataPoints []model.DataPoint) float64 {
 // ready for polygon rendering.
 func buildPixelPoints(
 	snapshot []model.DataPoint,
-	historySeconds int,
+	windowSeconds int,
 	plotLeft, plotBottom, plotWidth, plotHeight int,
 	niceMaxBytesPerSec float64,
 ) []pixelPoint {
 	nowMs := time.Now().UnixMilli()
-	historyMs := int64(historySeconds) * 1000
+	historyMs := int64(windowSeconds) * 1000
 	pixelPoints := make([]pixelPoint, 0, len(snapshot))
 
 	for _, dataPoint := range snapshot {
@@ -283,8 +282,9 @@ var niceMinuteIntervals = []int{1, 2, 5, 10, 15, 20, 30, 60, 120, 180, 240, 300,
 
 // chooseXAxisInterval returns the smallest "nice" minute interval such that
 // adjacent labels are at least minXLabelSpacingPx pixels apart.
-func chooseXAxisInterval(historySeconds, plotWidthPx int) time.Duration {
-	totalMinutes := historySeconds / 60
+// plotWidthPx is both the pixel width and the number of seconds displayed (1px = 1s).
+func chooseXAxisInterval(plotWidthPx int) time.Duration {
+	totalMinutes := plotWidthPx / 60
 	if totalMinutes <= 0 || plotWidthPx <= 0 {
 		return time.Minute
 	}
@@ -301,14 +301,13 @@ func drawXAxis(
 	gtx layout.Context,
 	matTheme *material.Theme,
 	currentTheme *Theme,
-	historySeconds int,
 	plotLeft, plotBottom, plotWidth, tickLength int,
 ) {
 	nowMs := time.Now().UnixMilli()
-	historyMs := int64(historySeconds) * 1000
+	historyMs := int64(plotWidth) * 1000 // 1px = 1 second
 	windowStart := time.UnixMilli(nowMs - historyMs)
 
-	interval := chooseXAxisInterval(historySeconds, plotWidth)
+	interval := chooseXAxisInterval(plotWidth)
 	firstBoundary := windowStart.Truncate(interval).Add(interval)
 
 	for tickTime := firstBoundary; !tickTime.After(time.UnixMilli(nowMs)); tickTime = tickTime.Add(interval) {

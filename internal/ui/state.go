@@ -8,11 +8,11 @@ import (
 // AppState holds all mutable UI state. It is owned by the main goroutine and
 // must only be accessed from the Gio event loop.
 type AppState struct {
-	DataBuffer     *buffer.RingBuffer[model.DataPoint]
-	CurrentTheme   *Theme
-	HostLabel      string
-	HistorySeconds int
-	IsDarkTheme    bool
+	DataBuffer   *buffer.RingBuffer[model.DataPoint]
+	CurrentTheme *Theme
+	HostLabel    string
+	IsDarkTheme  bool
+	GraphWidthPx int // plot area pixel width; updated each frame by layout
 }
 
 // ToggleTheme switches between DarkTheme and LightTheme.
