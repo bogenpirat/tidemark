@@ -59,7 +59,7 @@ func (statsPanel *StatsPanel) Layout(gtx layout.Context) layout.Dimensions {
 	panelWidth := gtx.Dp(statsPanelWidthDp)
 	panelHeight := gtx.Constraints.Max.Y
 
-	fillRect(gtx.Ops, currentTheme.PanelBackground, image.Rect(0, 0, panelWidth, panelHeight))
+	fillRect(gtx.Ops, currentTheme.Background, image.Rect(0, 0, panelWidth, panelHeight))
 
 	innerPadding := gtx.Dp(12)
 	lineHeight := gtx.Dp(18)
