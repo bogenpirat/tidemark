@@ -19,6 +19,7 @@ import (
 const (
 	statsPanelWidthDp    = 150
 	toggleButtonHeightDp = 28
+	toggleButtonWidthDp  = 40
 )
 
 // StatsPanel is a Gio widget that displays current, max, and average
@@ -77,7 +78,7 @@ func (statsPanel *StatsPanel) Layout(gtx layout.Context) layout.Dimensions {
 
 	// Theme toggle button pinned to the bottom of the panel.
 	drawThemeToggleButton(gtx, matTheme, currentTheme, &statsPanel.ThemeButton,
-		statsPanel.AppState.IsDarkTheme, innerPadding, panelWidth, panelHeight)
+		innerPadding, panelWidth, panelHeight)
 
 	return layout.Dimensions{Size: image.Pt(panelWidth, panelHeight)}
 }
@@ -88,21 +89,15 @@ func drawThemeToggleButton(
 	matTheme *material.Theme,
 	currentTheme *Theme,
 	button *widget.Clickable,
-	isDarkTheme bool,
 	innerPadding, panelWidth, panelHeight int,
 ) {
 	buttonHeight := gtx.Dp(toggleButtonHeightDp)
-	buttonWidth := panelWidth - innerPadding*2
-	buttonX := innerPadding
+	buttonWidth := gtx.Dp(toggleButtonWidthDp)
+	buttonX := (panelWidth - buttonWidth) / 2
 	buttonY := panelHeight - buttonHeight - innerPadding
 
 	if buttonWidth <= 0 || buttonY <= 0 {
 		return
-	}
-
-	buttonLabel := "Switch to Light Mode"
-	if !isDarkTheme {
-		buttonLabel = "Switch to Dark Mode"
 	}
 
 	offsetStack := op.Offset(image.Pt(buttonX, buttonY)).Push(gtx.Ops)
@@ -111,8 +106,8 @@ func drawThemeToggleButton(
 	buttonGtx := gtx
 	buttonGtx.Constraints = layout.Exact(image.Pt(buttonWidth, buttonHeight))
 
-	btn := material.Button(matTheme, button, buttonLabel)
-	btn.TextSize = unit.Sp(11)
+	btn := material.Button(matTheme, button, "💡")
+	btn.TextSize = unit.Sp(16)
 	btn.Background = currentTheme.ButtonFace
 	btn.Color = currentTheme.ButtonText
 	btn.Inset = layout.Inset{

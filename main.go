@@ -14,6 +14,7 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/font/gofont"
+	gioopentype "gioui.org/font/opentype"
 	"gioui.org/op"
 	"gioui.org/text"
 	"gioui.org/unit"
@@ -91,8 +92,15 @@ func main() {
 		}
 	}()
 
+	fontCollection := gofont.Collection()
+	if symData, err := os.ReadFile(`C:\Windows\Fonts\seguisym.ttf`); err == nil {
+		if symFaces, err := gioopentype.ParseCollection(symData); err == nil {
+			fontCollection = append(fontCollection, symFaces...)
+		}
+	}
+
 	matTheme := material.NewTheme()
-	matTheme.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	matTheme.Shaper = text.NewShaper(text.WithCollection(fontCollection))
 	rootLayout := ui.NewRootLayout(appState, matTheme)
 
 	var lastFrameEvent app.FrameEvent
