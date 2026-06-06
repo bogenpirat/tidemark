@@ -18,6 +18,7 @@ type AppState struct {
 	ContextMenuVisible bool
 	ContextMenuPos     image.Point
 	ExitRequested      bool
+	SettingsRequested  bool
 }
 
 // ToggleTheme switches between DarkTheme and LightTheme.

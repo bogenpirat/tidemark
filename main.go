@@ -106,6 +106,9 @@ func main() {
 	var lastFrameEvent app.FrameEvent
 	hasFrame := false
 
+	dialogResultChan := make(chan ui.DialogResult, 1)
+	var dialogOpen bool
+
 	var ops op.Ops
 	for {
 		windowEvent := window.Event()
@@ -131,6 +134,26 @@ func main() {
 		case app.FrameEvent:
 			lastFrameEvent = typedEvent
 			hasFrame = true
+
+			// Apply any saved config from a closed settings dialog.
+			select {
+			case result := <-dialogResultChan:
+				dialogOpen = false
+				if result.Saved {
+					if result.FilePath != "" {
+						configFilePath = result.FilePath
+					}
+					result.Config.WindowWidthDp = appConfig.WindowWidthDp
+					result.Config.WindowHeightDp = appConfig.WindowHeightDp
+					*appConfig = result.Config
+					appState.HostLabel = appConfig.Host
+					if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
+						slog.Error("failed to save config", "err", saveErr)
+					}
+				}
+			default:
+			}
+
 			pendingMu.Lock()
 			incomingPoints := pendingPoints
 			pendingPoints = nil
@@ -151,6 +174,18 @@ func main() {
 			gtx := app.NewContext(&ops, typedEvent)
 			rootLayout.Layout(gtx)
 			typedEvent.Frame(&ops)
+
+			if appState.SettingsRequested && !dialogOpen {
+				appState.SettingsRequested = false
+				dialogOpen = true
+				cfg := *appConfig
+				isDark := appState.IsDarkTheme
+				go func() {
+					result := ui.RunSettingsDialog(matTheme, cfg, isDark)
+					dialogResultChan <- result
+					window.Invalidate()
+				}()
+			}
 
 			if appState.ExitRequested {
 				slog.Info("exit via context menu, shutting down")

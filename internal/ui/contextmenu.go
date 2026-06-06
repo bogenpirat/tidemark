@@ -13,21 +13,26 @@ import (
 )
 
 const (
-	menuWidthDp      = 100
+	menuWidthDp      = 120
 	menuItemHeightDp = 24
 	menuPaddingXDp   = 8
 )
 
+// drawContextMenu renders the right-click context menu with two items:
+// Settings (top) and Exit (bottom). Both items register clickable hit areas
+// with z-order higher than the full-window backdrop.
 func drawContextMenu(
 	gtx layout.Context,
 	currentTheme *Theme,
 	matTheme *material.Theme,
+	settingsItem *widget.Clickable,
 	exitItem *widget.Clickable,
 	pos image.Point,
 ) {
 	menuWidth  := gtx.Dp(menuWidthDp)
 	itemHeight := gtx.Dp(menuItemHeightDp)
-	menuHeight := itemHeight + 2 // 1px border top + bottom
+	numItems   := 2
+	menuHeight := numItems*itemHeight + 2 // 1px border top + bottom
 
 	maxX := gtx.Constraints.Max.X
 	maxY := gtx.Constraints.Max.Y
@@ -47,8 +52,7 @@ func drawContextMenu(
 	menuRect := image.Rect(pos.X, pos.Y, pos.X+menuWidth, pos.Y+menuHeight)
 
 	fillRect(gtx.Ops, currentTheme.PanelBackground, menuRect)
-
-	// Border lines
+	// Border
 	fillRect(gtx.Ops, currentTheme.BorderColor,
 		image.Rect(menuRect.Min.X, menuRect.Min.Y, menuRect.Max.X, menuRect.Min.Y+1))
 	fillRect(gtx.Ops, currentTheme.BorderColor,
@@ -58,19 +62,29 @@ func drawContextMenu(
 	fillRect(gtx.Ops, currentTheme.BorderColor,
 		image.Rect(menuRect.Max.X-1, menuRect.Min.Y, menuRect.Max.X, menuRect.Max.Y))
 
-	itemRect := image.Rect(
-		menuRect.Min.X+1, menuRect.Min.Y+1,
-		menuRect.Max.X-1, menuRect.Min.Y+1+itemHeight,
-	)
-	itemWidth := itemRect.Dx()
+	itemWidth := menuWidth - 2
+	drawMenuItem(gtx, currentTheme, matTheme, settingsItem, "Settings",
+		image.Pt(menuRect.Min.X+1, menuRect.Min.Y+1), itemWidth, itemHeight)
+	drawMenuItem(gtx, currentTheme, matTheme, exitItem, "Exit",
+		image.Pt(menuRect.Min.X+1, menuRect.Min.Y+1+itemHeight), itemWidth, itemHeight)
+}
 
-	offsetStack := op.Offset(itemRect.Min).Push(gtx.Ops)
-	clipStack := clip.Rect(image.Rect(0, 0, itemWidth, itemHeight)).Push(gtx.Ops)
+func drawMenuItem(
+	gtx layout.Context,
+	currentTheme *Theme,
+	matTheme *material.Theme,
+	item *widget.Clickable,
+	label string,
+	origin image.Point,
+	w, h int,
+) {
+	offsetStack := op.Offset(origin).Push(gtx.Ops)
+	clipStack := clip.Rect(image.Rect(0, 0, w, h)).Push(gtx.Ops)
 
-	exitGtx := gtx
-	exitGtx.Constraints = layout.Exact(image.Pt(itemWidth, itemHeight))
-	exitItem.Layout(exitGtx, func(gtx layout.Context) layout.Dimensions {
-		if exitItem.Hovered() {
+	itemGtx := gtx
+	itemGtx.Constraints = layout.Exact(image.Pt(w, h))
+	item.Layout(itemGtx, func(gtx layout.Context) layout.Dimensions {
+		if item.Hovered() {
 			fillRect(gtx.Ops, currentTheme.ButtonFace,
 				image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y))
 		}
@@ -79,7 +93,7 @@ func drawContextMenu(
 		labelGtx := gtx
 		labelGtx.Constraints = layout.Exact(
 			image.Pt(gtx.Constraints.Max.X-pad, gtx.Constraints.Max.Y))
-		lbl := material.Label(matTheme, unit.Sp(12), "Exit")
+		lbl := material.Label(matTheme, unit.Sp(12), label)
 		lbl.Color = currentTheme.PanelText
 		lbl.Alignment = text.Start
 		lbl.Layout(labelGtx)

@@ -15,12 +15,13 @@ import (
 )
 
 type RootLayout struct {
-	AppState    *AppState
-	MatTheme    *material.Theme
-	Graph       *Graph
-	StatsPanel  *StatsPanel
-	backdropTag struct{}
-	exitItem    widget.Clickable
+	AppState     *AppState
+	MatTheme     *material.Theme
+	Graph        *Graph
+	StatsPanel   *StatsPanel
+	backdropTag  struct{}
+	settingsItem widget.Clickable
+	exitItem     widget.Clickable
 }
 
 func NewRootLayout(appState *AppState, matTheme *material.Theme) *RootLayout {
@@ -42,6 +43,10 @@ func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
 		if _, ok := ev.(pointer.Event); ok {
 			rootLayout.AppState.ContextMenuVisible = false
 		}
+	}
+	for rootLayout.settingsItem.Clicked(gtx) {
+		rootLayout.AppState.ContextMenuVisible = false
+		rootLayout.AppState.SettingsRequested = true
 	}
 	for rootLayout.exitItem.Clicked(gtx) {
 		rootLayout.AppState.ContextMenuVisible = false
@@ -113,7 +118,8 @@ func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		// Draw menu and register exit item (higher z-order than backdrop).
 		drawContextMenu(gtx, currentTheme, rootLayout.MatTheme,
-			&rootLayout.exitItem, rootLayout.AppState.ContextMenuPos)
+			&rootLayout.settingsItem, &rootLayout.exitItem,
+			rootLayout.AppState.ContextMenuPos)
 	}
 
 	return layout.Dimensions{Size: gtx.Constraints.Max}
