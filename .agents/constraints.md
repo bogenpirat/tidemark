@@ -4,13 +4,38 @@ Hard-won knowledge from this project's development. Read before making changes.
 
 ---
 
-## 1. Do NOT call SetWindowPos from Win32ViewEvent
+## 1. Never call SendMessage-using Win32 APIs from the main goroutine
 
-**What happened**: A window-position-saving feature was added that called `SetWindowPos` inside the `Win32ViewEvent` handler to restore the saved position. The app froze every time on launch.
+**What happened (twice)**:
+- A window-position feature called `SetWindowPos` from `Win32ViewEvent` → app froze on launch.
+- A WS_MAXIMIZEBOX-stripping feature called `SetWindowLongPtrW` from the main goroutine (first from `Win32ViewEvent`, then from the `FrameEvent` handler after a mistaken "fix") → app froze on launch.
 
-**Why**: `Win32ViewEvent` fires during HWND initialization. Calling `SetWindowPos` at that point sends a Win32 message synchronously into a message pump that isn't fully running yet, causing a deadlock.
+**Why — the deadlock mechanism**:
+`SetWindowPos`, `SetWindowLongPtrW` (with `GWL_STYLE`), and many other Win32 APIs send `WM_STYLECHANGED`, `WM_WINDOWPOSCHANGED`, etc. via `SendMessage` — a *synchronous* cross-thread call that **blocks the calling OS thread** until Gio's Win32 thread processes the message. If the main goroutine is the caller:
 
-**Rule**: `Win32ViewEvent` is safe only for reading HWND and making non-message-sending style changes (`GetWindowLong`/`SetWindowLong` for style bits is fine). Any operation that involves sending Win32 messages must be deferred to the first `FrameEvent` or later.
+1. Main goroutine blocks inside `SendMessage`, waiting for the Win32 thread.
+2. Win32 thread tries to enqueue a `FrameEvent` into Gio's Go channel.
+3. Channel is full because nobody is reading it (main goroutine is stuck).
+4. Win32 thread blocks on the channel write — it never reaches `GetMessage`.
+5. `SendMessage` never gets processed → permanent deadlock.
+
+Moving the call to a `FrameEvent` handler does NOT help — the main goroutine is still the caller.
+
+**Fix**: Run the Win32 API call on a **separate goroutine**. The main goroutine stays free to drain the event channel; the Win32 thread can return to `GetMessage` and process the message; the goroutine unblocks. No sleep needed.
+
+```go
+func onPlatformEvent(e event.Event) {
+    ev, ok := e.(app.Win32ViewEvent)
+    if !ok || !ev.Valid() { return }
+    hwnd := ev.HWND
+    go func() {
+        style := getWindowLong(hwnd)
+        setWindowLong(hwnd, style&^wsMaximizeBox)
+    }()
+}
+```
+
+**Rule**: Any Win32 API that internally uses `SendMessage` must be called from a dedicated goroutine, never from the main Gio event-loop goroutine. `GetWindowLong` (read-only, no messages) is safe anywhere.
 
 ---
 
@@ -28,7 +53,7 @@ Hard-won knowledge from this project's development. Read before making changes.
 
 **What happened**: Using `system.ActionInputOp(ActionMove)` makes Gio return `HTCAPTION` from `WM_NCHITTEST`. Win32's default handling of a double-click on `HTCAPTION` is to toggle maximize.
 
-**Fix**: Strip `WS_MAXIMIZEBOX` from `GWL_STYLE` after the HWND is ready (`Win32ViewEvent`). This is done in `platform_windows.go → onPlatformEvent`.
+**Fix**: Strip `WS_MAXIMIZEBOX` from `GWL_STYLE` on a separate goroutine started from the `Win32ViewEvent` handler (see constraint #1 for why a goroutine is required). This is done in `platform_windows.go → onPlatformEvent`.
 
 **Side effect**: The maximize button (if it existed) would also be hidden, but since decorations are removed (`app.Decorated(false)`), this is irrelevant.
 

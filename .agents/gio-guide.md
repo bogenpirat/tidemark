@@ -160,8 +160,16 @@ btn.Layout(gtx)
 
 ## Avoiding Gio deadlocks (Win32)
 
-**Do NOT call Win32 functions that send messages (SetWindowPos, SetWindowLong for position, etc.) from within `Win32ViewEvent` handlers.** The HWND is being set up at that point and Win32's message pump may re-enter or block.
+**Never call Win32 APIs that use `SendMessage` internally from the main goroutine** — this includes `SetWindowPos`, `SetWindowLongPtrW` with `GWL_STYLE`, and similar. Doing so blocks the main goroutine, which stops Gio's event channel from being drained, which blocks the Win32 thread trying to enqueue a `FrameEvent` → permanent deadlock. This applies regardless of which event handler you're in (`Win32ViewEvent`, `FrameEvent`, etc.).
 
-Safe: read the HWND from `Win32ViewEvent`, store it, use it after the first `FrameEvent`.  
-Safe: call `GetWindowLong`/`SetWindowLong` for style bits (not position) from `Win32ViewEvent` — NTG does this to strip `WS_MAXIMIZEBOX` and it works reliably.  
-Unsafe: `SetWindowPos` from within `Win32ViewEvent`.
+**Safe**: `GetWindowLong`/`GetWindowLongPtrW` — read-only, sends no messages, safe from anywhere.  
+**Unsafe from main goroutine**: `SetWindowLongPtrW`, `SetWindowPos`, and any API that notifies the window via `SendMessage`.
+
+**Fix**: run such calls on a separate goroutine. The main goroutine stays free; the Win32 thread can return to `GetMessage` and process the message; the goroutine unblocks cleanly.
+
+```go
+go func() {
+    style := getWindowLong(hwnd)
+    setWindowLong(hwnd, style&^wsMaximizeBox)
+}()
+```
