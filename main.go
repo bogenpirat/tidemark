@@ -140,9 +140,6 @@ func main() {
 			case result := <-dialogResultChan:
 				dialogOpen = false
 				if result.Saved {
-					if result.FilePath != "" {
-						configFilePath = result.FilePath
-					}
 					result.Config.WindowWidthDp = appConfig.WindowWidthDp
 					result.Config.WindowHeightDp = appConfig.WindowHeightDp
 					*appConfig = result.Config

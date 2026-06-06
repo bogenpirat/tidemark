@@ -232,27 +232,17 @@ Constants: `menuWidthDp = 120`, `menuItemHeightDp = 24`, `menuPaddingXDp = 8`.
 
 ### `dialog.go`
 
-**`RunSettingsDialog(mat, cfg, isDark) DialogResult`** — opens a second `app.Window` titled "Settings" (520×460 dp), runs its own Gio event loop, and blocks until the window is closed. Safe to call from any goroutine. Returns a `DialogResult{Saved bool, Config AppConfig, FilePath string}`.
+**`RunSettingsDialog(mat, cfg, isDark) DialogResult`** — opens a second `app.Window` titled "Settings" (520×460 dp), runs its own Gio event loop, and blocks until the window is closed. Safe to call from any goroutine. Returns a `DialogResult{Saved bool, Config AppConfig}`.
 
-**`settingsDialog`** — internal struct with `widget.Editor` fields for each `AppConfig` field (host, community, port, ifIndex, dlOID, ulOID, timeoutMs, retries) and three `widget.Clickable` buttons (Save, Save As…, Cancel).
+**`settingsDialog`** — internal struct with `widget.Editor` fields for each `AppConfig` field (host, community, port, ifIndex, dlOID, ulOID, timeoutMs, retries) and two `widget.Clickable` buttons (Save, Cancel).
 
-`Layout(gtx) dialogAction` — renders the form each frame; processes button clicks deferred from the previous frame; returns `dlgSave`, `dlgSaveAs`, `dlgCancel`, or `dlgNone`.
+`Layout(gtx) dialogAction` — renders the form each frame; processes button clicks deferred from the previous frame; returns `dlgSave`, `dlgCancel`, or `dlgNone`.
 
 `validate()` — parses all editor text and returns a populated `AppConfig` plus any error strings. OIDs are validated by `isValidOID` (dotted-numeric, ≥ 2 components).
 
-When Save/Save As is clicked: validates, shows errors inline if invalid, otherwise sets `d.closing = true`, populates `result`, and calls `win.Perform(system.ActionClose)`.
-
-`dlgSaveAs` path: calls `showSaveDialog()` (platform-specific) to get a file path before closing.
+When Save is clicked: validates, shows errors inline if invalid, otherwise sets `d.closing = true`, populates `result`, and calls `win.Perform(system.ActionClose)`.
 
 Constants (all in dp): `dlgLabelWidthDp=140`, `dlgFieldHeightDp=26`, `dlgFieldPadDp=4`, `dlgRowGapDp=7`, `dlgOuterPadDp=16`, `dlgBtnHeightDp=30`, `dlgBtnWidthDp=88`, `dlgBtnGapDp=8`.
-
-### `dialog_windows.go` (`//go:build windows`)
-
-`showSaveDialog() string` — opens the Windows file-save common dialog by running a PowerShell one-liner (`System.Windows.Forms.SaveFileDialog`). Returns the chosen path or `""` on cancel/error.
-
-### `dialog_stub.go` (`//go:build !windows`)
-
-`func showSaveDialog() string { return "" }` — no-op stub so the package compiles cross-platform.
 
 ### `statspanel.go`
 

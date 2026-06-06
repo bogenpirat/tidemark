@@ -19,12 +19,10 @@ import (
 	"tidemark/internal/config"
 )
 
-// DialogResult is the outcome of the settings dialog. FilePath is non-empty
-// when the user chose Save As and selected a different file.
+// DialogResult is the outcome of the settings dialog.
 type DialogResult struct {
-	Saved    bool
-	Config   config.AppConfig
-	FilePath string
+	Saved  bool
+	Config config.AppConfig
 }
 
 const (
@@ -46,9 +44,8 @@ var (
 type dialogAction int
 
 const (
-	dlgNone    dialogAction = iota
+	dlgNone   dialogAction = iota
 	dlgSave
-	dlgSaveAs
 	dlgCancel
 )
 
@@ -68,7 +65,6 @@ type settingsDialog struct {
 	retries   widget.Editor
 
 	saveBtn   widget.Clickable
-	saveAsBtn widget.Clickable
 	cancelBtn widget.Clickable
 }
 
@@ -181,9 +177,6 @@ func (d *settingsDialog) Layout(gtx layout.Context) dialogAction {
 	var action dialogAction
 	for d.saveBtn.Clicked(gtx) {
 		action = dlgSave
-	}
-	for d.saveAsBtn.Clicked(gtx) {
-		action = dlgSaveAs
 	}
 	for d.cancelBtn.Clicked(gtx) {
 		action = dlgCancel
@@ -320,13 +313,13 @@ func (d *settingsDialog) noteRow(gtx layout.Context) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, lineH)}
 }
 
-// buttonRow renders Cancel / Save As / Save right-aligned at the bottom.
+// buttonRow renders Cancel / Save right-aligned at the bottom.
 func (d *settingsDialog) buttonRow(gtx layout.Context) layout.Dimensions {
 	btnH := gtx.Dp(dlgBtnHeightDp)
 	btnW := gtx.Dp(dlgBtnWidthDp)
 	gap := gtx.Dp(dlgBtnGapDp)
 	pad := gtx.Dp(dlgOuterPadDp)
-	totalBtnW := 3*btnW + 2*gap
+	totalBtnW := 2*btnW + gap
 	startX := gtx.Constraints.Max.X - pad - totalBtnW
 
 	type entry struct {
@@ -335,7 +328,6 @@ func (d *settingsDialog) buttonRow(gtx layout.Context) layout.Dimensions {
 	}
 	for i, e := range []entry{
 		{&d.cancelBtn, "Cancel"},
-		{&d.saveAsBtn, "Save As..."},
 		{&d.saveBtn, "Save"},
 	} {
 		x := startX + i*(btnW+gap)
@@ -396,20 +388,6 @@ func RunSettingsDialog(mat *material.Theme, cfg config.AppConfig, isDark bool) D
 					d.closing = true
 					result = DialogResult{Saved: true, Config: parsed}
 					win.Perform(system.ActionClose)
-				}
-			case dlgSaveAs:
-				parsed, errs := d.validate()
-				if len(errs) > 0 {
-					d.errors = errs
-					win.Invalidate()
-				} else {
-					// showSaveDialog blocks while the OS file picker is open.
-					path := showSaveDialog()
-					if path != "" {
-						d.closing = true
-						result = DialogResult{Saved: true, Config: parsed, FilePath: path}
-						win.Perform(system.ActionClose)
-					}
 				}
 			case dlgCancel:
 				win.Perform(system.ActionClose)
