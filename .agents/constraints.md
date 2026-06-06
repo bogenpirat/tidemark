@@ -112,6 +112,14 @@ Fields with `omitempty` (`windowWidthDp`, `windowHeightDp`) are omitted if zero,
 
 ---
 
+## 12. Right-clicks in HTCAPTION regions require WndProc subclassing
+
+`ActionMove` regions return `HTCAPTION` from `WM_NCHITTEST`. Win32 routes right-clicks in `HTCAPTION` areas as `WM_NCRBUTTONDOWN` (non-client button down), not `WM_RBUTTONDOWN`. Gio only processes client-area messages and never exposes `WM_NCRBUTTONDOWN` as a pointer event, so `pointer.Filter` and right-click gesture detection do not work in drag regions.
+
+**Fix**: subclass the WndProc via `SetWindowLongPtrW(hwnd, GWLP_WNDPROC, callback)` in the same goroutine that strips `WS_MAXIMIZEBOX`. `GWLP_WNDPROC` does not send `WM_STYLECHANGED` so there is no deadlock risk (constraint #1 applies only to `GWL_STYLE`). The custom WndProc intercepts `WM_NCRBUTTONDOWN`, converts screen→client coordinates with `ScreenToClient`, stores the result behind a mutex, invalidates the window, and returns 0 (suppressing Win32's default system-menu). The main goroutine calls `TakeRightClick()` before each `Layout` to consume this result.
+
+**Do not** try to detect right-clicks in drag regions using Gio pointer events — they will never fire for `WM_NCRBUTTONDOWN`.
+
 ## 11. Build constraints for platform-specific code
 
 `platform_windows.go` uses `//go:build windows` and references `app.Win32ViewEvent` which only exists in `gioui.org/app/os_windows.go`. Without this constraint the package won't compile on non-Windows. The companion `platform.go` uses `//go:build !windows` to provide a no-op stub, keeping the cross-platform build graph valid.

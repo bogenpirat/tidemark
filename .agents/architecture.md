@@ -2,7 +2,7 @@
 
 ## What the program does
 
-Reads one JSON config file, opens an undecorated borderless window, polls an SNMP v2c host once per second, and renders a live scrolling graph of download (red) and upload (green) throughput. A narrow stats panel on the right shows current/max/avg and a theme-toggle button. Intended to run as 3 side-by-side instances for 3 hosts.
+Reads one JSON config file, opens an undecorated borderless window, polls an SNMP v2c host once per second, and renders a live scrolling graph of download (red) and upload (green) throughput. A narrow stats panel on the right shows current/max/avg and a theme-toggle button. Right-clicking anywhere opens a context menu (Settings / Exit). Settings opens a second Gio window for editing the config. Escape exits immediately. Intended to run as 3 side-by-side instances for 3 hosts.
 
 ## Goroutines
 
@@ -58,3 +58,17 @@ On close, `FrameEvent.Size` (pixels) is converted to dp via `FrameEvent.Metric.P
 - The stats panel from top down to just above the button row
 
 Gio responds to Win32 `WM_NCHITTEST` with `HTCAPTION` for those rectangles, giving native OS drag behavior. The button row at the bottom of the stats panel is intentionally excluded — `ActionAt` never returns `ActionMove` there, so button clicks are unaffected.
+
+**Right-clicks in drag regions**: because these regions return `HTCAPTION`, right-clicks arrive as `WM_NCRBUTTONDOWN` (non-client), which Gio never surfaces as a pointer event. `platform_windows.go` subclasses the WndProc (`GWLP_WNDPROC`) to intercept `WM_NCRBUTTONDOWN`, converts screen→client coordinates, and stores the result for `TakeRightClick()` to consume on the next frame.
+
+## Context menu
+
+When `TakeRightClick()` returns a position, `main.go` sets `AppState.ContextMenuVisible = true` and `AppState.ContextMenuPos`. On the next `Layout` call, `layout.go` draws the menu (Settings / Exit items) above a full-window backdrop. Any click outside the menu items hits the backdrop and clears `ContextMenuVisible`. Clicks on items set `SettingsRequested` or `ExitRequested` on `AppState`.
+
+## Settings dialog
+
+When `AppState.SettingsRequested` is set, `main.go` launches a goroutine that calls `ui.RunSettingsDialog(...)`, which opens a second `app.Window` with its own event loop. When that window closes, the goroutine sends a `DialogResult` to `dialogResultChan` (buffered, cap 1) and calls `window.Invalidate()` on the main window. On the next `FrameEvent`, `main.go` drains the channel and applies the new config (updating `appState.HostLabel` and saving the file).
+
+## Keyboard exit
+
+`layout.go` registers a `key.Filter{Name: key.NameEscape}` input handler each frame. On Escape press it sets `AppState.ExitRequested = true`. `main.go` handles this in the `FrameEvent` branch: saves config and calls `os.Exit(0)`.

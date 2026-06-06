@@ -140,6 +140,45 @@ clip.Rect(image.Rect(statsLeft, 0, totalWidth, buttonRowTop)).Push(gtx.Ops)
 system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
 ```
 
+## Keyboard input
+
+```go
+// Register interest in a key (each frame, inside Layout):
+key.InputOp{Tag: &myTag, Keys: key.Set("Escape")}.Add(gtx.Ops)
+// Or use key.Filter directly in gtx.Source.Event:
+for {
+    ev, ok := gtx.Source.Event(key.Filter{Name: key.NameEscape})
+    if !ok { break }
+    if ke, ok := ev.(key.Event); ok && ke.State == key.Press {
+        // handle
+    }
+}
+```
+
+`key.NameEscape` is the named constant for the Escape key. `ke.State` is `key.Press` on key-down or `key.Release` on key-up. The filter must be registered every frame; Gio does not retain it.
+
+## Custom pointer input tags (`event.Op`)
+
+To receive pointer events on an arbitrary region (without using `widget.Clickable`):
+
+```go
+// Register a clip area and attach an event tag:
+area := clip.Rect(image.Rect(x1, y1, x2, y2)).Push(gtx.Ops)
+event.Op(gtx.Ops, &myTag)  // myTag is any comparable value (e.g. struct{})
+area.Pop()
+
+// In the same or next frame, drain events:
+for {
+    ev, ok := gtx.Source.Event(pointer.Filter{Target: &myTag, Kinds: pointer.Press})
+    if !ok { break }
+    if _, ok := ev.(pointer.Event); ok {
+        // handle
+    }
+}
+```
+
+This pattern is used by the context-menu backdrop in `layout.go`: a full-window `event.Op` registered at the highest z-order catches any click outside the menu items and clears `ContextMenuVisible`.
+
 ## pointer.PassOp
 
 `pointer.PassOp{}.Push(gtx.Ops)` / `.Pop()` puts subsequent `event.Op` registrations into "pass-through" mode — they receive events but do not block siblings. Not used in NTG currently (the drag approach doesn't need it).

@@ -10,8 +10,14 @@ Entry point. Owns the Gio event loop. Key responsibilities:
 - Launch SNMP goroutine and bridge goroutine
 - Build font collection (gofont + Segoe UI Symbol for emoji fallback)
 - Create window: `app.Size(...)` from saved config or defaults, `app.Decorated(false)`
-- Event loop: `onPlatformEvent`, then switch on `DestroyEvent` / `FrameEvent`
+- Event loop: `onPlatformEvent(window, event)`, then switch on `DestroyEvent` / `FrameEvent`
 - On `DestroyEvent`: save window dimensions to config via `config.SaveConfig`
+- On `FrameEvent`: drain `dialogResultChan` (apply saved config if settings dialog closed), poll `TakeRightClick()` to show context menu, call `rootLayout.Layout`, then handle `appState.SettingsRequested` (launch dialog goroutine) and `appState.ExitRequested` (save config and `os.Exit(0)`)
+
+Settings dialog integration:
+- `dialogResultChan chan ui.DialogResult` (buffered, cap 1) — the dialog goroutine sends its result here when its window closes
+- `dialogOpen bool` — prevents opening a second dialog while one is already running
+- Dialog goroutine: calls `ui.RunSettingsDialog(matTheme, cfg, isDark)`, sends result to `dialogResultChan`, calls `window.Invalidate()`
 
 Constants:
 - `defaultWindowWidthDp = 1000`
@@ -19,15 +25,23 @@ Constants:
 
 ### `platform_windows.go` (`//go:build windows`)
 
-Called from `main.go`'s event loop on every event. On `app.Win32ViewEvent` with a valid HWND (fires once after window creation):
-- Reads `GWL_STYLE` with `GetWindowLongPtrW` (64-bit) or `GetWindowLongW` (32-bit)
-- Clears `WS_MAXIMIZEBOX` bit so double-clicking the caption area doesn't maximize
+Called from `main.go`'s event loop on every event. On `app.Win32ViewEvent` with a valid HWND (fires once after window creation), spawns a goroutine that:
+1. Reads `GWL_STYLE` and clears `WS_MAXIMIZEBOX` so double-clicking the caption area doesn't maximize.
+2. Calls `installOnce.Do` to subclass the WndProc (see below).
 
-Constants: `gwlStyle = ^(uintptr(16) - 1)` (-16), `wsMaximizeBox = 0x00010000`
+**WndProc subclassing** — `ActionMove` regions return `HTCAPTION` from `WM_NCHITTEST`, so right-clicks in those regions arrive as `WM_NCRBUTTONDOWN` (non-client), which Gio never routes as a pointer event. `customWndProc` intercepts `WM_NCRBUTTONDOWN`, converts screen→client coordinates via `ScreenToClient`, stores the result in `rightClickPos` (guarded by `rightClickMu`), invalidates the window, and returns 0 to suppress Win32's default system-menu. All other messages are forwarded to the original WndProc via `CallWindowProcW`.
+
+**`TakeRightClick() (bool, image.Point)`** — called from the main goroutine before each `Layout` call. Returns and clears any pending right-click position.
+
+**`atomicWin atomic.Pointer[app.Window]`** — stored on the first `Win32ViewEvent` so `customWndProc` (running on the Win32 thread) can call `win.Invalidate()`.
+
+Constants: `gwlStyle` (-16), `gwlpWndProc` (-4), `wsMaximizeBox`, `wmNcRButtonDown` (0x00A4).
 
 ### `platform.go` (`//go:build !windows`)
 
-No-op stub: `func onPlatformEvent(e event.Event) {}`
+No-op stubs:
+- `func onPlatformEvent(win *app.Window, e event.Event) {}`
+- `func TakeRightClick() (bool, image.Point) { return false, image.Point{} }`
 
 ---
 
@@ -143,11 +157,15 @@ Fields: `Background`, `GraphBackground`, `DownloadFill`, `UploadFill`, `OverlapF
 
 ```go
 type AppState struct {
-    DataBuffer     *buffer.RingBuffer[model.DataPoint]
-    CurrentTheme   *Theme
-    HostLabel      string
-    HistorySeconds int
-    IsDarkTheme    bool
+    DataBuffer         *buffer.RingBuffer[model.DataPoint]
+    CurrentTheme       *Theme
+    HostLabel          string
+    IsDarkTheme        bool
+    GraphWidthPx       int        // plot area pixel width; updated each frame by layout
+    ContextMenuVisible bool
+    ContextMenuPos     image.Point
+    ExitRequested      bool
+    SettingsRequested  bool
 }
 func (s *AppState) ToggleTheme()
 ```
@@ -156,13 +174,22 @@ func (s *AppState) ToggleTheme()
 
 ### `layout.go`
 
-`RootLayout` owns `Graph` and `StatsPanel` sub-widgets.
+`RootLayout` owns `Graph` and `StatsPanel` sub-widgets, plus three internal fields used for input handling:
+- `backdropTag struct{}` — event tag for the full-window backdrop that dismisses the context menu
+- `settingsItem widget.Clickable` — context menu "Settings" item
+- `exitItem widget.Clickable` — context menu "Exit" item
 
 `Layout(gtx)`:
-1. Fills the background.
-2. Registers two `system.ActionInputOp(system.ActionMove)` clip regions (drag areas) — see Architecture.
-3. Renders `StatsPanel` on the right (`statsPanelWidthDp = 150` dp).
-4. Renders `Graph` on the remaining left area.
+1. Drains deferred input events from the previous frame:
+   - `pointer.Filter{Target: &backdropTag}` — any press outside the menu dismisses it
+   - `settingsItem.Clicked` → sets `AppState.SettingsRequested = true`
+   - `exitItem.Clicked` → sets `AppState.ExitRequested = true`
+   - `key.Filter{Name: key.NameEscape}` — Escape key sets `AppState.ExitRequested = true`
+2. Fills the background.
+3. Registers two `system.ActionInputOp(system.ActionMove)` drag regions — see Architecture.
+4. Renders `StatsPanel` on the right (`statsPanelWidthDp = 150` dp).
+5. Renders `Graph` on the remaining left area.
+6. If `AppState.ContextMenuVisible`: registers the full-window backdrop (highest z-order, dismisses menu on click), then draws the context menu via `drawContextMenu`.
 
 The drag-region bottom boundary uses constants from `statspanel.go` directly (same package):
 ```go
@@ -194,6 +221,38 @@ Drawing helpers (all in `graph.go`):
 - `drawHLine` / `drawVLine` — 1px lines
 - `drawPositionedLabel` — clips a `material.Label` to a rect at absolute position
 - `drawPolygonRun` — fills a closed polygon using `clip.Path`
+
+### `contextmenu.go`
+
+`drawContextMenu(gtx, theme, matTheme, settingsItem, exitItem, pos image.Point)` — renders a two-item right-click menu (Settings, Exit) at the given client position. Clamps the menu rect to stay within the window bounds. Draws a bordered box using `PanelBackground`/`BorderColor`, then calls `drawMenuItem` for each entry.
+
+`drawMenuItem` — renders one menu item as a `widget.Clickable` with hover highlight (`ButtonFace`) and a left-padded label.
+
+Constants: `menuWidthDp = 120`, `menuItemHeightDp = 24`, `menuPaddingXDp = 8`.
+
+### `dialog.go`
+
+**`RunSettingsDialog(mat, cfg, isDark) DialogResult`** — opens a second `app.Window` titled "Settings" (520×460 dp), runs its own Gio event loop, and blocks until the window is closed. Safe to call from any goroutine. Returns a `DialogResult{Saved bool, Config AppConfig, FilePath string}`.
+
+**`settingsDialog`** — internal struct with `widget.Editor` fields for each `AppConfig` field (host, community, port, ifIndex, dlOID, ulOID, timeoutMs, retries) and three `widget.Clickable` buttons (Save, Save As…, Cancel).
+
+`Layout(gtx) dialogAction` — renders the form each frame; processes button clicks deferred from the previous frame; returns `dlgSave`, `dlgSaveAs`, `dlgCancel`, or `dlgNone`.
+
+`validate()` — parses all editor text and returns a populated `AppConfig` plus any error strings. OIDs are validated by `isValidOID` (dotted-numeric, ≥ 2 components).
+
+When Save/Save As is clicked: validates, shows errors inline if invalid, otherwise sets `d.closing = true`, populates `result`, and calls `win.Perform(system.ActionClose)`.
+
+`dlgSaveAs` path: calls `showSaveDialog()` (platform-specific) to get a file path before closing.
+
+Constants (all in dp): `dlgLabelWidthDp=140`, `dlgFieldHeightDp=26`, `dlgFieldPadDp=4`, `dlgRowGapDp=7`, `dlgOuterPadDp=16`, `dlgBtnHeightDp=30`, `dlgBtnWidthDp=88`, `dlgBtnGapDp=8`.
+
+### `dialog_windows.go` (`//go:build windows`)
+
+`showSaveDialog() string` — opens the Windows file-save common dialog by running a PowerShell one-liner (`System.Windows.Forms.SaveFileDialog`). Returns the chosen path or `""` on cancel/error.
+
+### `dialog_stub.go` (`//go:build !windows`)
+
+`func showSaveDialog() string { return "" }` — no-op stub so the package compiles cross-platform.
 
 ### `statspanel.go`
 
