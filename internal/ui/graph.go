@@ -75,8 +75,10 @@ func (graph *Graph) Layout(gtx layout.Context) layout.Dimensions {
 	fillRect(gtx.Ops, currentTheme.Background, image.Rect(0, 0, totalWidth, totalHeight))
 	fillRect(gtx.Ops, currentTheme.GraphBackground, image.Rect(plotLeft, plotTop, plotRight, plotBottom))
 
-	// Determine Y-axis scale from data.
-	maximumBytesPerSec := computeMaximumBytesPerSec(snapshot)
+	// Determine Y-axis scale from data currently in view. The visible window is
+	// plotWidth seconds wide (1px = 1s), matching buildPixelPoints below, so the
+	// scale shrinks again once a spike scrolls off the left edge.
+	maximumBytesPerSec := computeMaximumBytesPerSec(snapshot, plotWidth)
 	scaleUnit := units.GetScaleUnit(maximumBytesPerSec)
 	niceMaxInUnit, stepSizeInUnit := units.NiceAxisMax(maximumBytesPerSec / scaleUnit.Divisor)
 	niceMaxBytesPerSec := niceMaxInUnit * scaleUnit.Divisor
@@ -112,11 +114,20 @@ func (graph *Graph) Layout(gtx layout.Context) layout.Dimensions {
 }
 
 // computeMaximumBytesPerSec returns the highest single download or upload rate
-// across all non-error data points.
-func computeMaximumBytesPerSec(dataPoints []model.DataPoint) float64 {
+// across all non-error data points currently within the visible window.
+// windowSeconds is the width of the visible plot in seconds (1px = 1s); points
+// older than this have scrolled off the left edge and are excluded so the scale
+// can shrink as old peaks leave view.
+func computeMaximumBytesPerSec(dataPoints []model.DataPoint, windowSeconds int) float64 {
+	nowMs := time.Now().UnixMilli()
+	historyMs := int64(windowSeconds) * 1000
 	var maximumValue float64
 	for _, dataPoint := range dataPoints {
 		if dataPoint.IsError {
+			continue
+		}
+		ageMs := nowMs - dataPoint.TimestampMs
+		if ageMs < 0 || ageMs > historyMs {
 			continue
 		}
 		if dataPoint.DownloadBytesPerSec > maximumValue {
