@@ -14,11 +14,9 @@ jobs:
       matrix:
         include:
           - name: debug
-            ldflags: ""
-            artifact: ntg-debug.exe
+            target: debug
           - name: release
-            ldflags: "-s -w -H windowsgui"
-            artifact: ntg.exe
+            target: release
 
     name: ${{ matrix.name }}
 
@@ -30,11 +28,16 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build
-        run: go build -ldflags="${{ matrix.ldflags }}" -o ${{ matrix.artifact }} .
+      - name: Install build tools
+        run: |
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+          go install github.com/magefile/mage@latest
+
+      - name: Build (go generate + go build via mage)
+        run: mage ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.artifact }}
+          path: tidemark.exe
