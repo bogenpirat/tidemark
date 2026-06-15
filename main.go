@@ -45,7 +45,6 @@ func main() {
 	slog.Info("configuration loaded",
 		"host", appConfig.Host,
 		"port", appConfig.Port,
-		"interfaceIndex", appConfig.InterfaceIndex,
 		"timeoutMs", appConfig.TimeoutMs,
 	)
 

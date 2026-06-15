@@ -55,9 +55,8 @@ No-op stubs:
 | Host | string | `host` | required |
 | Community | string | `community` | required |
 | Port | uint16 | `port` | 161 |
-| InterfaceIndex | int | `interfaceIndex` | 1 |
-| DownloadOID | string | `downloadOID` | auto from ifIndex |
-| UploadOID | string | `uploadOID` | auto from ifIndex |
+| DownloadOID | string | `downloadOID` | `1.3.6.1.2.1.31.1.1.1.6.1` |
+| UploadOID | string | `uploadOID` | `1.3.6.1.2.1.31.1.1.1.10.1` |
 | TimeoutMs | int | `timeoutMs` | 3000 |
 | Retries | int | `retries` | 1 |
 | HistorySeconds | int | `historySeconds` | 600 (max 3600) |
@@ -109,10 +108,9 @@ Capacity is set to `AppConfig.HistorySeconds` (default 600 entries = 10 minutes 
 ```go
 const OIDIfHCInOctets  = "1.3.6.1.2.1.31.1.1.1.6"   // download (64-bit)
 const OIDIfHCOutOctets = "1.3.6.1.2.1.31.1.1.1.10"  // upload (64-bit)
-func BuildOID(base string, index int) string          // appends ".N"
 ```
 
-If `downloadOID`/`uploadOID` are missing from the config, `LoadConfig` fills them using `OIDIfHCInOctets`/`OIDIfHCOutOctets` + interface index. The config can override these to use `ifInOctets` / `ifOutOctets` (32-bit) OIDs instead.
+If `downloadOID`/`uploadOID` are missing from the config, `LoadConfig` defaults them to the interface-1 high-capacity counters (`OIDIfHCInOctets`/`OIDIfHCOutOctets` + `.1`). The config can override these to use `ifInOctets` / `ifOutOctets` (32-bit) OIDs, or any other interface, instead.
 
 ### `service.go`
 
@@ -234,7 +232,7 @@ Constants: `menuWidthDp = 120`, `menuItemHeightDp = 24`, `menuPaddingXDp = 8`.
 
 **`RunSettingsDialog(mat, cfg, isDark) DialogResult`** — opens a second `app.Window` titled "Settings" (520×460 dp), runs its own Gio event loop, and blocks until the window is closed. Safe to call from any goroutine. Returns a `DialogResult{Saved bool, Config AppConfig}`.
 
-**`settingsDialog`** — internal struct with `widget.Editor` fields for each `AppConfig` field (host, community, port, ifIndex, dlOID, ulOID, timeoutMs, retries) and two `widget.Clickable` buttons (Save, Cancel).
+**`settingsDialog`** — internal struct with `widget.Editor` fields for each `AppConfig` field (host, community, port, snmpVersion, dlOID, ulOID, timeoutMs, retries) and two `widget.Clickable` buttons (Save, Cancel).
 
 `Layout(gtx) dialogAction` — renders the form each frame; processes button clicks deferred from the previous frame; returns `dlgSave`, `dlgCancel`, or `dlgNone`.
 

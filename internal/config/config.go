@@ -12,7 +12,6 @@ type AppConfig struct {
 	Community      string  `json:"community"`
 	Port           uint16  `json:"port"`
 	SNMPVersion    string  `json:"snmpVersion"`
-	InterfaceIndex int     `json:"interfaceIndex"`
 	DownloadOID    string  `json:"downloadOID"`
 	UploadOID      string  `json:"uploadOID"`
 	TimeoutMs      int     `json:"timeoutMs"`
@@ -47,14 +46,11 @@ func LoadConfig(filePath string) (*AppConfig, error) {
 	if appConfig.SNMPVersion == "" {
 		appConfig.SNMPVersion = "2c"
 	}
-	if appConfig.InterfaceIndex == 0 {
-		appConfig.InterfaceIndex = 1
-	}
 	if appConfig.DownloadOID == "" {
-		appConfig.DownloadOID = fmt.Sprintf("1.3.6.1.2.1.31.1.1.1.6.%d", appConfig.InterfaceIndex)
+		appConfig.DownloadOID = "1.3.6.1.2.1.31.1.1.1.6.1"
 	}
 	if appConfig.UploadOID == "" {
-		appConfig.UploadOID = fmt.Sprintf("1.3.6.1.2.1.31.1.1.1.10.%d", appConfig.InterfaceIndex)
+		appConfig.UploadOID = "1.3.6.1.2.1.31.1.1.1.10.1"
 	}
 	if appConfig.TimeoutMs == 0 {
 		appConfig.TimeoutMs = 3000

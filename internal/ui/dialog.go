@@ -59,7 +59,6 @@ type settingsDialog struct {
 	community   widget.Editor
 	port        widget.Editor
 	snmpVersion widget.Editor
-	ifIndex     widget.Editor
 	dlOID       widget.Editor
 	ulOID       widget.Editor
 	timeoutMs   widget.Editor
@@ -76,7 +75,7 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.AppConfig) *
 	}
 	d := &settingsDialog{mat: mat, theme: th}
 	for _, ed := range []*widget.Editor{
-		&d.hosts, &d.community, &d.port, &d.snmpVersion, &d.ifIndex,
+		&d.hosts, &d.community, &d.port, &d.snmpVersion,
 		&d.dlOID, &d.ulOID, &d.timeoutMs, &d.retries,
 	} {
 		ed.SingleLine = true
@@ -85,7 +84,6 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.AppConfig) *
 	d.community.SetText(cfg.Community)
 	d.port.SetText(fmt.Sprintf("%d", cfg.Port))
 	d.snmpVersion.SetText(cfg.SNMPVersion)
-	d.ifIndex.SetText(fmt.Sprintf("%d", cfg.InterfaceIndex))
 	d.dlOID.SetText(cfg.DownloadOID)
 	d.ulOID.SetText(cfg.UploadOID)
 	d.timeoutMs.SetText(fmt.Sprintf("%d", cfg.TimeoutMs))
@@ -120,12 +118,6 @@ func (d *settingsDialog) validate() (config.AppConfig, []string) {
 		errs = append(errs, "SNMP Version: must be \"1\" or \"2c\"")
 	} else {
 		cfg.SNMPVersion = ver
-	}
-
-	if idx, err := strconv.Atoi(strings.TrimSpace(d.ifIndex.Text())); err != nil || idx < 1 {
-		errs = append(errs, "Interface Index: must be ≥ 1")
-	} else {
-		cfg.InterfaceIndex = idx
 	}
 
 	dlOID := strings.TrimSpace(d.dlOID.Text())
@@ -200,8 +192,6 @@ func (d *settingsDialog) Layout(gtx layout.Context) dialogAction {
 		layout.Rigid(d.fieldRow("Port", &d.port, "1–65535")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("SNMP Version", &d.snmpVersion, "1 or 2c")),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
-		layout.Rigid(d.fieldRow("Interface Index", &d.ifIndex, "e.g., 1")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Download OID", &d.dlOID, "1.3.6.1.2.1.31.1.1.1.6.x")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
@@ -369,7 +359,7 @@ func RunSettingsDialog(mat *material.Theme, cfg config.AppConfig, isDark bool) D
 	win := new(app.Window)
 	win.Option(
 		app.Title("Settings"),
-		app.Size(unit.Dp(520), unit.Dp(493)),
+		app.Size(unit.Dp(520), unit.Dp(460)),
 	)
 
 	d := newSettingsDialog(mat, isDark, cfg)
