@@ -62,6 +62,10 @@ No-op stubs:
 | HistorySeconds | int | `historySeconds` | 600 (max 3600) |
 | WindowWidthDp | float32 | `windowWidthDp,omitempty` | 0 (uses default) |
 | WindowHeightDp | float32 | `windowHeightDp,omitempty` | 0 (uses default) |
+| WindowX | *int | `windowX,omitempty` | nil (OS places window) |
+| WindowY | *int | `windowY,omitempty` | nil (OS places window) |
+
+Window geometry is runtime-managed: size (dp) and top-left position (`WindowX`/`WindowY`, physical screen px) are written back on exit and restored on launch. Position uses Win32 `GetWindowRect`/`SetWindowPos` (`platform_windows.go`) since Gio has no window-position API; `*int` distinguishes "never saved" (nil) from a valid `0` coordinate.
 
 **`LoadConfig(filePath string) (*AppConfig, error)`** — reads file, unmarshals, applies defaults, validates required fields.
 

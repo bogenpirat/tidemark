@@ -18,6 +18,10 @@ type AppConfig struct {
 	Retries        int     `json:"retries"`
 	WindowWidthDp  float32 `json:"windowWidthDp,omitempty"`
 	WindowHeightDp float32 `json:"windowHeightDp,omitempty"`
+	// WindowX and WindowY are the last saved top-left screen position in physical
+	// pixels. nil means no saved position (let the OS place the window).
+	WindowX *int `json:"windowX,omitempty"`
+	WindowY *int `json:"windowY,omitempty"`
 }
 
 // LoadConfig reads and validates the JSON configuration file at filePath,

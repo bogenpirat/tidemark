@@ -19,6 +19,10 @@ const (
 	gwlpWndProc     = ^(uintptr(4) - 1)  // GWLP_WNDPROC  = -4
 	wsMaximizeBox   = uintptr(0x00010000)
 	wmNcRButtonDown = 0x00A4
+
+	swpNoSize     = uintptr(0x0001) // SWP_NOSIZE
+	swpNoZOrder   = uintptr(0x0004) // SWP_NOZORDER
+	swpNoActivate = uintptr(0x0010) // SWP_NOACTIVATE
 )
 
 var (
@@ -29,10 +33,57 @@ var (
 	procSetWindowLongPW = modUser32.NewProc("SetWindowLongPtrW")
 	procCallWindowProcW = modUser32.NewProc("CallWindowProcW")
 	procScreenToClient  = modUser32.NewProc("ScreenToClient")
+	procGetWindowRect   = modUser32.NewProc("GetWindowRect")
+	procSetWindowPos    = modUser32.NewProc("SetWindowPos")
 )
 
 // atomicWin holds the Gio window for use from the WndProc goroutine.
 var atomicWin atomic.Pointer[app.Window]
+
+// atomicHWND holds the native window handle once the Win32ViewEvent arrives,
+// so the main goroutine can query/restore the window position.
+var atomicHWND atomic.Uintptr
+
+// initialPos records a screen position to apply once the native handle exists.
+var (
+	initialMoveOnce sync.Once
+	initialMoveX    int
+	initialMoveY    int
+	initialMoveSet  bool
+)
+
+// winRect mirrors the Win32 RECT struct for GetWindowRect.
+type winRect struct{ left, top, right, bottom int32 }
+
+// SetInitialWindowPos records a top-left screen position (physical pixels) to
+// apply to the window as soon as its native handle is available. Call before the
+// event loop starts; a no-op until then.
+func SetInitialWindowPos(x, y int) {
+	initialMoveX, initialMoveY = x, y
+	initialMoveSet = true
+}
+
+// GetWindowPosition returns the window's current top-left screen position in
+// physical pixels. ok is false if the native handle is not yet available.
+func GetWindowPosition() (x int, y int, ok bool) {
+	hwnd := atomicHWND.Load()
+	if hwnd == 0 {
+		return 0, 0, false
+	}
+	var r winRect
+	ret, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
+	if ret == 0 {
+		return 0, 0, false
+	}
+	return int(r.left), int(r.top), true
+}
+
+// moveWindow positions the window's top-left at (x, y) screen pixels without
+// changing its size, z-order, or activation state.
+func moveWindow(hwnd uintptr, x, y int) {
+	procSetWindowPos.Call(hwnd, 0, uintptr(x), uintptr(y), 0, 0,
+		swpNoSize|swpNoZOrder|swpNoActivate)
+}
 
 var (
 	installOnce  sync.Once
@@ -115,6 +166,7 @@ func onPlatformEvent(win *app.Window, e event.Event) {
 	}
 	hwnd := ev.HWND
 	atomicWin.Store(win)
+	atomicHWND.Store(hwnd)
 	// Win32 APIs that send WM_STYLECHANGED (SetWindowLongPtr for GWL_STYLE) must run
 	// on a separate goroutine — calling them from the main goroutine deadlocks because
 	// SendMessage blocks the caller while the Win32 thread waits to post a FrameEvent
@@ -132,5 +184,12 @@ func onPlatformEvent(win *app.Window, e event.Event) {
 			wndProcCB = syscall.NewCallback(customWndProc)
 			origWndProc = setWndProc(hwnd, wndProcCB)
 		})
+
+		// Restore the saved position once, after the handle exists.
+		if initialMoveSet {
+			initialMoveOnce.Do(func() {
+				moveWindow(hwnd, initialMoveX, initialMoveY)
+			})
+		}
 	}()
 }

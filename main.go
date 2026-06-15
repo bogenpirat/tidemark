@@ -79,6 +79,11 @@ func main() {
 		app.Decorated(false),
 	)
 
+	// Restore the last saved window position (applied once the native handle exists).
+	if appConfig.WindowX != nil && appConfig.WindowY != nil {
+		SetInitialWindowPos(*appConfig.WindowX, *appConfig.WindowY)
+	}
+
 	var pendingMu sync.Mutex
 	var pendingPoints []model.DataPoint
 
@@ -105,6 +110,25 @@ func main() {
 	var lastFrameEvent app.FrameEvent
 	hasFrame := false
 
+	// Last known top-left screen position, refreshed each frame so it survives a
+	// DestroyEvent (where the native handle may already be gone).
+	var lastPosX, lastPosY int
+	var hasPos bool
+
+	persistConfig := func() {
+		if hasFrame {
+			appConfig.WindowWidthDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.X))
+			appConfig.WindowHeightDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.Y))
+		}
+		if hasPos {
+			appConfig.WindowX = &lastPosX
+			appConfig.WindowY = &lastPosY
+		}
+		if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
+			slog.Error("failed to save config", "err", saveErr)
+		}
+	}
+
 	dialogResultChan := make(chan ui.DialogResult, 1)
 	var dialogOpen bool
 
@@ -117,13 +141,7 @@ func main() {
 		case app.DestroyEvent:
 			slog.Info("window closed, shutting down")
 			cancelContext()
-			if hasFrame {
-				appConfig.WindowWidthDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.X))
-				appConfig.WindowHeightDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.Y))
-				if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
-					slog.Error("failed to save config", "err", saveErr)
-				}
-			}
+			persistConfig()
 			if typedEvent.Err != nil {
 				slog.Error("window destroyed with error", "err", typedEvent.Err)
 				os.Exit(1)
@@ -133,6 +151,9 @@ func main() {
 		case app.FrameEvent:
 			lastFrameEvent = typedEvent
 			hasFrame = true
+			if x, y, ok := GetWindowPosition(); ok {
+				lastPosX, lastPosY, hasPos = x, y, true
+			}
 
 			// Apply any saved config from a closed settings dialog.
 			select {
@@ -141,6 +162,8 @@ func main() {
 				if result.Saved {
 					result.Config.WindowWidthDp = appConfig.WindowWidthDp
 					result.Config.WindowHeightDp = appConfig.WindowHeightDp
+					result.Config.WindowX = appConfig.WindowX
+					result.Config.WindowY = appConfig.WindowY
 					*appConfig = result.Config
 					appState.HostLabel = appConfig.Host
 					if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
@@ -193,11 +216,7 @@ func main() {
 			if appState.ExitRequested {
 				slog.Info("exit via context menu, shutting down")
 				cancelContext()
-				appConfig.WindowWidthDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.X))
-				appConfig.WindowHeightDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.Y))
-				if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
-					slog.Error("failed to save config", "err", saveErr)
-				}
+				persistConfig()
 				os.Exit(0)
 			}
 		}
