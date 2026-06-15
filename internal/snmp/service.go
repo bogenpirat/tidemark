@@ -20,13 +20,6 @@ type snmpDebugLogger struct{}
 func (snmpDebugLogger) Print(v ...any)                    { slog.Debug(fmt.Sprint(v...)) }
 func (snmpDebugLogger) Printf(format string, v ...any)    { slog.Debug(fmt.Sprintf(format, v...)) }
 
-const (
-	maxUint64AsFloat = float64(math.MaxUint64)
-	// counter64WrapThreshold detects wrap-around: if the delta is more than half
-	// of 2^64, assume the counter wrapped and compute the wrapped delta instead.
-	counter64WrapThreshold = float64(1 << 63)
-)
-
 // SnmpService polls an SNMP v2c host at 1-second intervals and sends
 // DataPoints to an output channel.
 type SnmpService struct {

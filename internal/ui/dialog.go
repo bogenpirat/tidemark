@@ -38,7 +38,6 @@ const (
 
 var (
 	dlgErrorColor = color.NRGBA{R: 210, G: 50, B: 50, A: 255}
-	dlgNoteColor  = color.NRGBA{R: 130, G: 130, B: 130, A: 255}
 )
 
 type dialogAction int
@@ -289,27 +288,6 @@ func (d *settingsDialog) errorSection(gtx layout.Context) layout.Dimensions {
 		totalH += lineH
 	}
 	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, totalH)}
-}
-
-// noteRow renders a small note about SNMP settings requiring a restart.
-func (d *settingsDialog) noteRow(gtx layout.Context) layout.Dimensions {
-	lineH := gtx.Dp(15)
-	pad := gtx.Dp(dlgOuterPadDp)
-	w := gtx.Constraints.Max.X - 2*pad
-	if w <= 0 {
-		return layout.Dimensions{}
-	}
-	offsetStack := op.Offset(image.Pt(pad, 0)).Push(gtx.Ops)
-	clipStack := clip.Rect(image.Rect(0, 0, w, lineH)).Push(gtx.Ops)
-	subGtx := gtx
-	subGtx.Constraints = layout.Exact(image.Pt(w, lineH))
-	lbl := material.Label(d.mat, unit.Sp(10), "SNMP settings take effect after restart.")
-	lbl.Color = dlgNoteColor
-	lbl.Alignment = text.End
-	lbl.Layout(subGtx)
-	clipStack.Pop()
-	offsetStack.Pop()
-	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, lineH)}
 }
 
 // buttonRow renders Cancel / Save right-aligned at the bottom.

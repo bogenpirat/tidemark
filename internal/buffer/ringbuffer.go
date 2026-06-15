@@ -43,8 +43,3 @@ func (ringBuffer *RingBuffer[T]) Snapshot() []T {
 	}
 	return snapshot
 }
-
-// Len returns the current number of items stored.
-func (ringBuffer *RingBuffer[T]) Len() int {
-	return ringBuffer.count
-}

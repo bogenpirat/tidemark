@@ -38,7 +38,6 @@ ntg/
     ├── model/datapoint.go         # DataPoint type
     ├── buffer/ringbuffer.go       # Generic fixed-capacity ring buffer
     ├── snmp/
-    │   ├── oids.go                # OID base constants
     │   └── service.go             # SNMP polling goroutine
     ├── units/units.go             # Byte-rate formatting and axis scaling
     └── ui/

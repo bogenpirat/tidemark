@@ -39,13 +39,6 @@ func FormatBytesPerSec(bytesPerSec float64) string {
 	return fmt.Sprintf("%.2f %s", scaledValue, scaleUnit.Label)
 }
 
-// FormatBytesPerSecInUnit formats a bytes/sec value using a specific ScaleUnit,
-// used to keep Y-axis labels consistent within a single render frame.
-func FormatBytesPerSecInUnit(bytesPerSec float64, scaleUnit ScaleUnit) string {
-	scaledValue := bytesPerSec / scaleUnit.Divisor
-	return fmt.Sprintf("%.2f", scaledValue)
-}
-
 // NiceAxisMax rounds maximumValue up to the next "nice" interval value and returns
 // both the rounded maximum and the notch step size, targeting between 4 and 6 notches.
 func NiceAxisMax(maximumValue float64) (niceMax float64, stepSize float64) {

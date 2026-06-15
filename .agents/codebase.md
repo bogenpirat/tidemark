@@ -103,14 +103,7 @@ Capacity is set to `AppConfig.HistorySeconds` (default 600 entries = 10 minutes 
 
 ## `internal/snmp`
 
-### `oids.go`
-
-```go
-const OIDIfHCInOctets  = "1.3.6.1.2.1.31.1.1.1.6"   // download (64-bit)
-const OIDIfHCOutOctets = "1.3.6.1.2.1.31.1.1.1.10"  // upload (64-bit)
-```
-
-If `downloadOID`/`uploadOID` are missing from the config, `LoadConfig` defaults them to the interface-1 high-capacity counters (`OIDIfHCInOctets`/`OIDIfHCOutOctets` + `.1`). The config can override these to use `ifInOctets` / `ifOutOctets` (32-bit) OIDs, or any other interface, instead.
+If `downloadOID`/`uploadOID` are missing from the config, `LoadConfig` defaults them to the interface-1 high-capacity (64-bit) counters: `1.3.6.1.2.1.31.1.1.1.6.1` (download) and `1.3.6.1.2.1.31.1.1.1.10.1` (upload). The config can override these to use `ifInOctets` / `ifOutOctets` (32-bit) OIDs, or any other interface, instead.
 
 ### `service.go`
 
