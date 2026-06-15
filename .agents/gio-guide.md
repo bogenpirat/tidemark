@@ -1,4 +1,4 @@
-# Gio Guide for NTG
+# Gio Guide for Tidemark
 
 Gio version: **v0.10.0**
 
@@ -85,7 +85,7 @@ Order matters: ops added later in the stream are "above" (higher z-order) earlie
 ## Text rendering
 
 ```go
-// Using material.Label (standard approach in NTG)
+// Using material.Label (standard approach in Tidemark)
 subGtx.Constraints = layout.Exact(image.Pt(width, height))
 lbl := material.Label(matTheme, unit.Sp(11), "text")
 lbl.Color = color.NRGBA{...}
@@ -93,7 +93,7 @@ lbl.Alignment = text.Middle  // or text.Start, text.End
 lbl.Layout(subGtx)
 ```
 
-The theme's `Shaper` must be set before use. NTG sets it in `main.go`:
+The theme's `Shaper` must be set before use. Tidemark sets it in `main.go`:
 ```go
 fontCollection := gofont.Collection()
 // append Segoe UI Symbol for emoji (💡) support
@@ -113,7 +113,7 @@ Set via `window.Option(...)` — can be called before the event loop starts or a
 
 ```go
 window.Option(
-    app.Title("NTG — host"),
+    app.Title("Tidemark — host"),
     app.Size(unit.Dp(w), unit.Dp(h)),   // initial size in dp
     app.Decorated(false),                // remove OS title bar/border
 )
@@ -127,7 +127,7 @@ window.Option(
 
 **Critical**: `ActionAt` (used by Gio internally to answer `WM_NCHITTEST`) walks the hit tree from highest to lowest z-order. It returns the FIRST area with a non-zero `action` field. Regular click handlers (buttons, etc.) have no `action` field and are skipped. Therefore, if an `ActionMove` region overlaps the button's area, clicking the button will ALSO start a window drag.
 
-**The fix NTG uses**: the `ActionMove` rects in `layout.go` are computed to NOT cover the button row at the bottom of the stats panel. There is no overlap, so `ActionAt` never returns `ActionMove` for the button area.
+**The fix Tidemark uses**: the `ActionMove` rects in `layout.go` are computed to NOT cover the button row at the bottom of the stats panel. There is no overlap, so `ActionAt` never returns `ActionMove` for the button area.
 
 ```go
 // layout.go — drag region calculation
@@ -181,7 +181,7 @@ This pattern is used by the context-menu backdrop in `layout.go`: a full-window 
 
 ## pointer.PassOp
 
-`pointer.PassOp{}.Push(gtx.Ops)` / `.Pop()` puts subsequent `event.Op` registrations into "pass-through" mode — they receive events but do not block siblings. Not used in NTG currently (the drag approach doesn't need it).
+`pointer.PassOp{}.Push(gtx.Ops)` / `.Pop()` puts subsequent `event.Op` registrations into "pass-through" mode — they receive events but do not block siblings. Not used in Tidemark currently (the drag approach doesn't need it).
 
 ## Widget.Clickable
 

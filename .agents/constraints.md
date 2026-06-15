@@ -43,7 +43,7 @@ func onPlatformEvent(e event.Event) {
 
 **What happened**: Registering `ActionMove` for the full window caused `ActionAt` to always return `ActionMove` even when hovering over the toggle button, because `ActionAt` skips regular click-handler nodes (they have no `action` field) and finds the `ActionMove` region below.
 
-**Rule**: `ActionMove` regions must be explicitly cut out around any interactive widget. NTG excludes the button row by computing `buttonRowTop = totalHeight - gtx.Dp(toggleButtonHeightDp) - gtx.Dp(12)` and registering two separate rects that don't cover that strip.
+**Rule**: `ActionMove` regions must be explicitly cut out around any interactive widget. Tidemark excludes the button row by computing `buttonRowTop = totalHeight - gtx.Dp(toggleButtonHeightDp) - gtx.Dp(12)` and registering two separate rects that don't cover that strip.
 
 **Important**: The `12` in the formula above is the inner padding (`innerPadding = gtx.Dp(12)`) used in `statspanel.go`. If the button position ever changes, this formula must be updated in `layout.go` to match.
 
