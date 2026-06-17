@@ -12,7 +12,36 @@ permissions:
   contents: write
 
 jobs:
+  package-macos:
+    runs-on: macos-latest # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install build tools
+        run: |
+          brew install librsvg
+          go install github.com/magefile/mage@latest
+
+      - name: Build and package macOS app
+        run: |
+          mage mac
+          mkdir -p dist
+          # tar preserves the executable bit on the bundled binary.
+          tar -czf dist/tidemark-macos-arm64.tar.gz Tidemark.app example-config.json README.md
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-dist
+          path: dist/tidemark-macos-arm64.tar.gz
+
   release:
+    needs: package-macos
     runs-on: windows-latest
 
     steps:
@@ -58,6 +87,12 @@ jobs:
           Compress-Archive -Path tidemark.exe, example-config.json, README.md `
             -DestinationPath dist/tidemark-windows-amd64-debug.zip -Force
 
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: macos-dist
+          path: dist
+
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v3
         with:
@@ -67,3 +102,4 @@ jobs:
           files: |
             dist/tidemark-windows-amd64.zip
             dist/tidemark-windows-amd64-debug.zip
+            dist/tidemark-macos-arm64.tar.gz

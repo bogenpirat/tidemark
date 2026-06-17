@@ -12,7 +12,7 @@ throughput on a smooth, scrolling graph — one compact window per device.
 [![Build](https://github.com/bogenpirat/tidemark/actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml)
 [![Release](https://github.com/bogenpirat/tidemark/actions/workflows/release.yml/badge.svg)](../../actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/bogenpirat/tidemark?sort=semver)](../../releases/latest)
-![Platform](https://img.shields.io/badge/platform-Windows-0A2540)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0A2540)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 
 </div>
@@ -146,6 +146,7 @@ go install github.com/magefile/mage@latest
 |-----------------|---------------------------------------------------------------|
 | `mage` / `mage release` | Optimized, windowless `tidemark.exe` (production build).|
 | `mage debug`    | Unoptimized build with a console attached for log output.     |
+| `mage mac`      | macOS `Tidemark.app` bundle (run on macOS; see below).        |
 | `mage generate` | Regenerate the embedded icon + version resource only.         |
 | `mage clean`    | Remove build artifacts.                                       |
 
@@ -153,6 +154,46 @@ go install github.com/magefile/mage@latest
 mage release
 .\tidemark.exe example-config.json
 ```
+
+### macOS
+
+`mage mac` produces a `Tidemark.app` bundle (Apple Silicon). It must be built
+**on macOS** with the Xcode command-line tools (`xcode-select --install`) because
+the native window behaviors use cgo/Cocoa, plus [librsvg](https://wiki.gnome.org/Projects/LibRsvg)
+for icon generation (`brew install librsvg`). The app icon is rasterized from
+`assets/tidemark.svg` into a `.icns` automatically (`mage icns`). Like the Windows
+build, Tidemark needs a config-file argument, so launch it explicitly:
+
+```sh
+brew install librsvg
+mage mac
+./Tidemark.app/Contents/MacOS/tidemark my-router.json
+```
+
+The bundle is **unsigned**, so the first launch needs a right-click → Open (or
+`xattr -dr com.apple.quarantine Tidemark.app`) to get past Gatekeeper.
+
+## 🖥️ Platform support
+
+| Behavior                              | Windows | macOS | Linux |
+|---------------------------------------|:-------:|:-----:|:-----:|
+| Live graph, stats, SNMP polling, themes | ✅ | ✅ | ✅ |
+| Frameless window + drag to move        | ✅ | ✅ | ✅¹ |
+| Right-click context menu in drag area  | ✅ | ✅² | ❌ |
+| Save / restore window size             | ✅ | ✅ | ✅ |
+| Save / restore window position         | ✅ | ✅³ | ❌⁴ |
+| Theme-toggle 💡 glyph                  | ✅ | ⚠️⁵ | ⚠️⁵ |
+
+1. Linux/X11 supports it; on Wayland it depends on the compositor.
+2. Implemented via a local `NSEvent` monitor (`platform_darwin.go`); right-click
+   anywhere in the window opens the menu (Windows opens it only over drag areas).
+3. Persisted in screen pixels relative to the **primary** screen; on multi-monitor
+   layouts a window on a secondary display may be restored to a slightly different
+   spot.
+4. Wayland does not let applications query or set their own window position, so
+   this is a no-op there. (X11 could support it but is not implemented.)
+5. The 💡 (U+1F4A1) glyph only ships in color-emoji fonts on macOS/Linux, which
+   Gio cannot rasterize reliably, so it may show as a box. The button still works.
 
 ## 📦 Releases
 

@@ -4,6 +4,7 @@ package main
 
 import (
 	"image"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -11,8 +12,26 @@ import (
 	"unsafe"
 
 	"gioui.org/app"
+	giofont "gioui.org/font"
+	gioopentype "gioui.org/font/opentype"
 	"gioui.org/io/event"
 )
+
+// loadSymbolFontFaces returns extra font faces providing Unicode symbol/emoji
+// glyphs (notably U+1F4A1 💡, used by the theme-toggle button). On Windows this
+// is Segoe UI Symbol. Best-effort: returns nil if the font cannot be read or
+// parsed, in which case the glyph renders as a missing-glyph box.
+func loadSymbolFontFaces() []giofont.FontFace {
+	data, err := os.ReadFile(`C:\Windows\Fonts\seguisym.ttf`)
+	if err != nil {
+		return nil
+	}
+	faces, err := gioopentype.ParseCollection(data)
+	if err != nil {
+		return nil
+	}
+	return faces
+}
 
 const (
 	gwlStyle        = ^(uintptr(16) - 1) // GWL_STYLE     = -16
@@ -86,10 +105,10 @@ func moveWindow(hwnd uintptr, x, y int) {
 }
 
 var (
-	installOnce  sync.Once
-	origWndProc  uintptr
-	wndProcCB    uintptr
-	rightClickMu sync.Mutex
+	installOnce     sync.Once
+	origWndProc     uintptr
+	wndProcCB       uintptr
+	rightClickMu    sync.Mutex
 	rightClickReady bool
 	rightClickPos   image.Point
 )

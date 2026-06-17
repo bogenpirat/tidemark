@@ -122,4 +122,32 @@ Fields with `omitempty` (`windowWidthDp`, `windowHeightDp`) are omitted if zero,
 
 ## 11. Build constraints for platform-specific code
 
-`platform_windows.go` uses `//go:build windows` and references `app.Win32ViewEvent` which only exists in `gioui.org/app/os_windows.go`. Without this constraint the package won't compile on non-Windows. The companion `platform.go` uses `//go:build !windows` to provide a no-op stub, keeping the cross-platform build graph valid.
+`platform_windows.go` uses `//go:build windows` and references `app.Win32ViewEvent` which only exists in `gioui.org/app/os_windows.go`. Without this constraint the package won't compile on non-Windows. `platform_darwin.go` uses `//go:build darwin` (and cgo) for the macOS implementation, and `platform.go` uses `//go:build !windows && !darwin` to provide no-op stubs for Linux/other, keeping the cross-platform build graph valid. Every `platform_*.go` must define the same set of functions: `onPlatformEvent`, `TakeRightClick`, `SetInitialWindowPos`, `GetWindowPosition`, and `loadSymbolFontFaces`.
+
+---
+
+## 13. app.Main() must run on the main goroutine (macOS); event loop runs on its own goroutine
+
+`main.go` runs the Gio event loop (`for { window.Event() … }`) inside a `go func()` and then calls `app.Main()` last on the main goroutine. This is mandatory on macOS: `app.Main → osMain` does `C.gio_main()` (the NSApplication run loop) and panics if not on the main OS thread, and `newWindow` blocks on `<-launched` until that run loop starts. On Windows and Linux `osMain` is just `select{}` (each window pumps its own message loop on a goroutine Gio spawns), so the same structure is correct everywhere. **Do not** move the event loop back into the main goroutine — it will deadlock/panic on macOS.
+
+---
+
+## 14. Never dispatch_sync to the main queue from the event loop (macOS — analogue of #1)
+
+While the event-loop goroutine handles a `FrameEvent`, the macOS **main thread is blocked** inside `gio_onDraw → eventLoop.deliverEvent`'s `select`, waiting to exchange the frame with the goroutine (the `frameEvent` is sent with `Sync: true`). It is *not* servicing the main GCD queue. So a `dispatch_sync(dispatch_get_main_queue(), …)` from the goroutine would wait for a block the main thread cannot run until the frame completes — which it can't, because the goroutine is blocked. Permanent deadlock, exactly like the Win32 `SendMessage` case (#1).
+
+**Rule (macOS)**:
+- Reads needed every frame (window position) must come from a cache, not a synchronous main-thread call. `platform_darwin.go` updates the cache from `NSWindowDidMove`/`DidResize` observer blocks (which run on the main thread) and `GetWindowPosition` just reads it under a mutex.
+- Writes (`setFrameTopLeftPoint:`) use `dispatch_async` (fire-and-forget) so they never block the caller.
+
+---
+
+## 15. macOS right-clicks in drag regions need a local NSEvent monitor (analogue of #12)
+
+Gio's macOS driver calls `-[NSWindow performWindowDragWithEvent:]` for **any** mouse button whose press lands on an `ActionMove` region (`os_macos.go gio_onMouse` checks `ActionAt` regardless of button, then `return`s), so right-clicks there never reach the app as pointer events — the same end result as Win32 `WM_NCRBUTTONDOWN`. `platform_darwin.go` installs `[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown …]`, converts the location to top-left physical pixels, forwards it to the UI via `TakeRightClick`, and returns `nil` to consume the event (no drag, no system menu). The monitor fires for the whole window, so on macOS a right-click anywhere opens the menu (Windows restricts it to drag regions). Cocoa cannot be compiled or tested from the Windows dev box — verify any change to this file on an actual Mac.
+
+---
+
+## 16. //export requires all C in the cgo preamble to be `static`
+
+`platform_darwin.go` uses `//export tmRightClick` / `//export tmWindowMoved`. cgo copies the preamble into two C output files, so any **non-static definition** there would produce duplicate symbols at link time. Every helper in the preamble (`tm_install`, `tm_set_window_pos`, `tm_store_pos`, `tm_primary_screen_height`) and every global (`gMainView`, `gRightClickMonitor`, …) is therefore declared `static`. This mirrors how Gio's own `os_macos.go` is written.

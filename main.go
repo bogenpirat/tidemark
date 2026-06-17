@@ -14,7 +14,6 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/font/gofont"
-	gioopentype "gioui.org/font/opentype"
 	"gioui.org/op"
 	"gioui.org/text"
 	"gioui.org/unit"
@@ -23,7 +22,7 @@ import (
 
 const (
 	defaultWindowWidthDp = 1000
-	defaultRowHeightDp   = 250 // default per-host band height when none is saved
+	defaultRowHeightDp   = 250  // default per-host band height when none is saved
 	maxBufferSeconds     = 7200 // ring buffer capacity; enough for any realistic screen width
 )
 
@@ -129,141 +128,152 @@ func main() {
 		SetInitialWindowPos(*appConfig.WindowX, *appConfig.WindowY)
 	}
 
+	// Append platform-specific symbol/emoji font faces (best-effort) so the
+	// theme-toggle glyph (💡, U+1F4A1) renders. See loadSymbolFontFaces in the
+	// platform_*.go files.
 	fontCollection := gofont.Collection()
-	if symData, err := os.ReadFile(`C:\Windows\Fonts\seguisym.ttf`); err == nil {
-		if symFaces, err := gioopentype.ParseCollection(symData); err == nil {
-			fontCollection = append(fontCollection, symFaces...)
-		}
-	}
+	fontCollection = append(fontCollection, loadSymbolFontFaces()...)
 
 	matTheme := material.NewTheme()
 	matTheme.Shaper = text.NewShaper(text.WithCollection(fontCollection))
 	rootLayout := ui.NewRootLayout(appState, matTheme)
 
-	var lastFrameEvent app.FrameEvent
-	hasFrame := false
+	// The event loop runs on its own goroutine so that app.Main() can own the
+	// main goroutine. This is required on macOS, where Cocoa's NSApplication run
+	// loop must execute on the main OS thread (app.Main → osMain panics
+	// otherwise). On Windows and Linux app.Main simply blocks forever, so the
+	// same structure is correct on every platform.
+	go func() {
+		var lastFrameEvent app.FrameEvent
+		hasFrame := false
 
-	// Last known top-left screen position, refreshed each frame so it survives a
-	// DestroyEvent (where the native handle may already be gone).
-	var lastPosX, lastPosY int
-	var hasPos bool
+		// Last known top-left screen position, refreshed each frame so it survives a
+		// DestroyEvent (where the native handle may already be gone).
+		var lastPosX, lastPosY int
+		var hasPos bool
 
-	persistConfig := func() {
-		if hasFrame {
-			appConfig.WindowWidthDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.X))
-			appConfig.WindowHeightDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.Y))
-		}
-		if hasPos {
-			appConfig.WindowX = &lastPosX
-			appConfig.WindowY = &lastPosY
-		}
-		darkTheme := appState.IsDarkTheme
-		appConfig.DarkTheme = &darkTheme
-		if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
-			slog.Error("failed to save config", "err", saveErr)
-		}
-	}
-
-	stopAllHosts := func() {
-		for _, runtime := range runtimes {
-			if runtime.cancel != nil {
-				runtime.cancel()
+		persistConfig := func() {
+			if hasFrame {
+				appConfig.WindowWidthDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.X))
+				appConfig.WindowHeightDp = float32(lastFrameEvent.Metric.PxToDp(lastFrameEvent.Size.Y))
+			}
+			if hasPos {
+				appConfig.WindowX = &lastPosX
+				appConfig.WindowY = &lastPosY
+			}
+			darkTheme := appState.IsDarkTheme
+			appConfig.DarkTheme = &darkTheme
+			if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
+				slog.Error("failed to save config", "err", saveErr)
 			}
 		}
-	}
 
-	dialogResultChan := make(chan ui.DialogResult, 1)
-	var dialogOpen bool
-	var dialogHostIndex int
-
-	var ops op.Ops
-	for {
-		windowEvent := window.Event()
-		onPlatformEvent(window, windowEvent)
-
-		switch typedEvent := windowEvent.(type) {
-		case app.DestroyEvent:
-			slog.Info("window closed, shutting down")
-			stopAllHosts()
-			persistConfig()
-			if typedEvent.Err != nil {
-				slog.Error("window destroyed with error", "err", typedEvent.Err)
-				os.Exit(1)
-			}
-			os.Exit(0)
-
-		case app.FrameEvent:
-			lastFrameEvent = typedEvent
-			hasFrame = true
-			if x, y, ok := GetWindowPosition(); ok {
-				lastPosX, lastPosY, hasPos = x, y, true
-			}
-
-			// Apply any saved config from a closed settings dialog.
-			select {
-			case result := <-dialogResultChan:
-				dialogOpen = false
-				if result.Saved && dialogHostIndex >= 0 && dialogHostIndex < len(runtimes) {
-					appConfig.Hosts[dialogHostIndex] = result.Config
-					runtime := runtimes[dialogHostIndex]
-					runtime.state.HostLabel = result.Config.DisplayName()
-					if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
-						slog.Error("failed to save config", "err", saveErr)
-					}
-					// Restart this host's SNMP service with the new settings and a
-					// fresh buffer; other hosts keep running untouched.
-					runtime.cancel()
-					ctx, cancel := context.WithCancel(context.Background())
-					runtime.cancel = cancel
-					newBuffer := buffer.New[model.DataPoint](maxBufferSeconds)
-					runtime.buffer = newBuffer
-					runtime.state.DataBuffer = newBuffer
-					go snmpservice.NewService(&appConfig.Hosts[dialogHostIndex]).Start(ctx, runtime.outChan)
-				}
-			default:
-			}
-
-			// Drain each host's pending points into its buffer.
+		stopAllHosts := func() {
 			for _, runtime := range runtimes {
-				runtime.pendingMu.Lock()
-				incomingPoints := runtime.pendingPoints
-				runtime.pendingPoints = nil
-				runtime.pendingMu.Unlock()
-				for _, dataPoint := range incomingPoints {
-					runtime.buffer.Push(dataPoint)
+				if runtime.cancel != nil {
+					runtime.cancel()
 				}
 			}
+		}
 
-			if ok, pos := TakeRightClick(); ok {
-				appState.ContextMenuVisible = true
-				appState.ContextMenuPos = pos
-			}
+		dialogResultChan := make(chan ui.DialogResult, 1)
+		var dialogOpen bool
+		var dialogHostIndex int
 
-			gtx := app.NewContext(&ops, typedEvent)
-			rootLayout.Layout(gtx)
-			typedEvent.Frame(&ops)
+		var ops op.Ops
+		for {
+			windowEvent := window.Event()
+			onPlatformEvent(window, windowEvent)
 
-			if appState.SettingsRequested && !dialogOpen {
-				appState.SettingsRequested = false
-				dialogOpen = true
-				dialogHostIndex = appState.SettingsHostIndex
-				hostCfg := appConfig.Hosts[dialogHostIndex]
-				isDark := appState.IsDarkTheme
-				go func() {
-					result := ui.RunSettingsDialog(matTheme, hostCfg, isDark)
-					dialogResultChan <- result
-					window.Invalidate()
-				}()
-			}
-
-			if appState.ExitRequested {
-				slog.Info("exit via context menu, shutting down")
+			switch typedEvent := windowEvent.(type) {
+			case app.DestroyEvent:
+				slog.Info("window closed, shutting down")
 				stopAllHosts()
 				persistConfig()
+				if typedEvent.Err != nil {
+					slog.Error("window destroyed with error", "err", typedEvent.Err)
+					os.Exit(1)
+				}
 				os.Exit(0)
+
+			case app.FrameEvent:
+				lastFrameEvent = typedEvent
+				hasFrame = true
+				if x, y, ok := GetWindowPosition(); ok {
+					lastPosX, lastPosY, hasPos = x, y, true
+				}
+
+				// Apply any saved config from a closed settings dialog.
+				select {
+				case result := <-dialogResultChan:
+					dialogOpen = false
+					if result.Saved && dialogHostIndex >= 0 && dialogHostIndex < len(runtimes) {
+						appConfig.Hosts[dialogHostIndex] = result.Config
+						runtime := runtimes[dialogHostIndex]
+						runtime.state.HostLabel = result.Config.DisplayName()
+						if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
+							slog.Error("failed to save config", "err", saveErr)
+						}
+						// Restart this host's SNMP service with the new settings and a
+						// fresh buffer; other hosts keep running untouched.
+						runtime.cancel()
+						ctx, cancel := context.WithCancel(context.Background())
+						runtime.cancel = cancel
+						newBuffer := buffer.New[model.DataPoint](maxBufferSeconds)
+						runtime.buffer = newBuffer
+						runtime.state.DataBuffer = newBuffer
+						go snmpservice.NewService(&appConfig.Hosts[dialogHostIndex]).Start(ctx, runtime.outChan)
+					}
+				default:
+				}
+
+				// Drain each host's pending points into its buffer.
+				for _, runtime := range runtimes {
+					runtime.pendingMu.Lock()
+					incomingPoints := runtime.pendingPoints
+					runtime.pendingPoints = nil
+					runtime.pendingMu.Unlock()
+					for _, dataPoint := range incomingPoints {
+						runtime.buffer.Push(dataPoint)
+					}
+				}
+
+				if ok, pos := TakeRightClick(); ok {
+					appState.ContextMenuVisible = true
+					appState.ContextMenuPos = pos
+				}
+
+				gtx := app.NewContext(&ops, typedEvent)
+				rootLayout.Layout(gtx)
+				typedEvent.Frame(&ops)
+
+				if appState.SettingsRequested && !dialogOpen {
+					appState.SettingsRequested = false
+					dialogOpen = true
+					dialogHostIndex = appState.SettingsHostIndex
+					hostCfg := appConfig.Hosts[dialogHostIndex]
+					isDark := appState.IsDarkTheme
+					go func() {
+						result := ui.RunSettingsDialog(matTheme, hostCfg, isDark)
+						dialogResultChan <- result
+						window.Invalidate()
+					}()
+				}
+
+				if appState.ExitRequested {
+					slog.Info("exit via context menu, shutting down")
+					stopAllHosts()
+					persistConfig()
+					os.Exit(0)
+				}
 			}
 		}
-	}
+	}()
+
+	// Hand the main goroutine to the platform. Blocks forever on desktop; on
+	// macOS it drives the Cocoa run loop. The event loop goroutine above calls
+	// os.Exit on window close, terminating the process.
+	app.Main()
 }
 
 func setupLogging() {

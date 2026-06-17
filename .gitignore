@@ -33,6 +33,12 @@ $RECYCLE.BIN/
 
 *.syso
 
+# Generated macOS icon/bundle artifacts
+/tidemark.icns
+/tidemark.iconset/
+/tidemark-icon-master.png
+/Tidemark.app/
+
 # Local config files in the project root (keep templates only)
 /*.json
 !/example-config.json

@@ -54,7 +54,8 @@ All detailed documentation lives in `.agents/`:
 tidemark/
 ├── main.go                        # Entry point, event loop, SNMP wiring
 ├── platform_windows.go            # Win32-specific init (strips WS_MAXIMIZEBOX)
-├── platform.go                    # No-op stub for non-Windows builds
+├── platform_darwin.go             # macOS (cgo/Cocoa) right-click + window position
+├── platform.go                    # No-op stubs for Linux/other (!windows && !darwin)
 ├── magefile.go                    # Build targets (tagged //go:build mage)
 ├── resource_windows.go            # //go:generate goversioninfo directive
 ├── versioninfo.json               # Icon path + version metadata for the .exe

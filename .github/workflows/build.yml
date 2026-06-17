@@ -42,3 +42,34 @@ jobs:
         with:
           name: ${{ matrix.name }}
           path: tidemark.exe
+
+  build-macos:
+    runs-on: macos-latest # Apple Silicon (arm64)
+    name: macos
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install build tools
+        run: |
+          brew install librsvg
+          go install github.com/magefile/mage@latest
+
+      - name: Build app bundle (generates icon + cgo/Cocoa build)
+        run: mage mac
+
+      # tar (not the zip upload-artifact would make) preserves the executable
+      # bit on the Mach-O binary inside the bundle.
+      - name: Package
+        run: tar -czf tidemark-macos-arm64.tar.gz Tidemark.app example-config.json README.md
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: tidemark-macos-arm64.tar.gz

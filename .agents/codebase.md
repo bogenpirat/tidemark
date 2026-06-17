@@ -37,11 +37,22 @@ Called from `main.go`'s event loop on every event. On `app.Win32ViewEvent` with 
 
 Constants: `gwlStyle` (-16), `gwlpWndProc` (-4), `wsMaximizeBox`, `wmNcRButtonDown` (0x00A4).
 
-### `platform.go` (`//go:build !windows`)
+`loadSymbolFontFaces()` reads `seguisym.ttf` (Segoe UI Symbol) for the 💡 glyph.
 
-No-op stubs:
+### `platform_darwin.go` (`//go:build darwin`, cgo + Cocoa)
+
+macOS counterpart of `platform_windows.go`. On a valid `app.AppKitViewEvent` (`onPlatformEvent`), `tm_install` (marshaled to the main thread) wires up:
+- A local `NSEvent` right-mouse-down monitor — the analogue of the WndProc subclass. Gio routes drag-region presses of *any* button to `performWindowDragWithEvent:`, so right-clicks there never reach the app; the monitor converts to top-left physical pixels, calls back into Go (`//export tmRightClick`), and returns `nil` to consume the event. `TakeRightClick` drains it like on Windows.
+- `NSWindowDidMove`/`DidResize` observers that cache the window's top-left in physical pixels via `//export tmWindowMoved`. `GetWindowPosition` reads that cache under a mutex — it must **not** call the main thread synchronously (see constraints.md #14).
+
+`SetInitialWindowPos` is applied with `setFrameTopLeftPoint:` via `dispatch_async` (non-blocking). `loadSymbolFontFaces()` tries macOS system fonts (best-effort; the 💡 emoji glyph may not render — see constraints.md). All preamble C is `static` because of `//export` (constraints.md #16).
+
+### `platform.go` (`//go:build !windows && !darwin`)
+
+No-op stubs for Linux/other:
 - `func onPlatformEvent(win *app.Window, e event.Event) {}`
 - `func TakeRightClick() (bool, image.Point) { return false, image.Point{} }`
+- `SetInitialWindowPos`/`GetWindowPosition` no-ops; `loadSymbolFontFaces()` tries common Linux symbol fonts.
 
 ---
 
