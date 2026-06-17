@@ -32,3 +32,8 @@ $RECYCLE.BIN/
 *.log
 
 *.syso
+
+# Local config files in the project root (keep templates only)
+/*.json
+!/example-config.json
+!/versioninfo.json
