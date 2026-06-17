@@ -79,7 +79,7 @@ func main() {
 	for hostIndex := range appConfig.Hosts {
 		dataBuffer := buffer.New[model.DataPoint](maxBufferSeconds)
 		runtime := &hostRuntime{
-			state:   &ui.HostState{DataBuffer: dataBuffer, HostLabel: appConfig.Hosts[hostIndex].Host},
+			state:   &ui.HostState{DataBuffer: dataBuffer, HostLabel: appConfig.Hosts[hostIndex].DisplayName()},
 			buffer:  dataBuffer,
 			outChan: make(chan model.DataPoint, 10),
 		}
@@ -199,7 +199,7 @@ func main() {
 				if result.Saved && dialogHostIndex >= 0 && dialogHostIndex < len(runtimes) {
 					appConfig.Hosts[dialogHostIndex] = result.Config
 					runtime := runtimes[dialogHostIndex]
-					runtime.state.HostLabel = result.Config.Host
+					runtime.state.HostLabel = result.Config.DisplayName()
 					if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
 						slog.Error("failed to save config", "err", saveErr)
 					}

@@ -7,6 +7,7 @@
 	"hosts": [
 		{
 			"host": "192.168.1.1",
+			"name": "Main Router",
 			"community": "public",
 			"port": 161,
 			"snmpVersion": "2c",

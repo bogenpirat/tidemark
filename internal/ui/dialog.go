@@ -54,6 +54,7 @@ type settingsDialog struct {
 	closing bool
 	errors  []string
 
+	name        widget.Editor
 	hosts       widget.Editor
 	community   widget.Editor
 	port        widget.Editor
@@ -74,11 +75,12 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.HostConfig) 
 	}
 	d := &settingsDialog{mat: mat, theme: th}
 	for _, ed := range []*widget.Editor{
-		&d.hosts, &d.community, &d.port, &d.snmpVersion,
+		&d.name, &d.hosts, &d.community, &d.port, &d.snmpVersion,
 		&d.dlOID, &d.ulOID, &d.timeoutMs, &d.retries,
 	} {
 		ed.SingleLine = true
 	}
+	d.name.SetText(cfg.Name)
 	d.hosts.SetText(cfg.Host)
 	d.community.SetText(cfg.Community)
 	d.port.SetText(fmt.Sprintf("%d", cfg.Port))
@@ -93,6 +95,8 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.HostConfig) 
 func (d *settingsDialog) validate() (config.HostConfig, []string) {
 	var errs []string
 	var cfg config.HostConfig
+
+	cfg.Name = strings.TrimSpace(d.name.Text())
 
 	host := strings.TrimSpace(d.hosts.Text())
 	if host == "" {
@@ -184,6 +188,8 @@ func (d *settingsDialog) Layout(gtx layout.Context) dialogAction {
 
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgOuterPadDp)}.Layout),
+		layout.Rigid(d.fieldRow("Name", &d.name, "optional display name")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Host", &d.hosts, "e.g., 192.168.1.1")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Community", &d.community, "e.g., public")),
@@ -337,7 +343,7 @@ func RunSettingsDialog(mat *material.Theme, cfg config.HostConfig, isDark bool) 
 	win := new(app.Window)
 	win.Option(
 		app.Title("Settings"),
-		app.Size(unit.Dp(520), unit.Dp(460)),
+		app.Size(unit.Dp(520), unit.Dp(500)),
 	)
 
 	d := newSettingsDialog(mat, isDark, cfg)

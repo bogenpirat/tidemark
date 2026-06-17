@@ -9,7 +9,10 @@ import (
 // HostConfig holds the SNMP polling configuration for a single monitored
 // target. One of these exists per element of AppConfig.Hosts.
 type HostConfig struct {
-	Host        string `json:"host"`
+	Host string `json:"host"`
+	// Name is an optional human-friendly label shown on the graph instead of the
+	// raw host address. When empty, Host is displayed.
+	Name        string `json:"name,omitempty"`
 	Community   string `json:"community"`
 	Port        uint16 `json:"port"`
 	SNMPVersion string `json:"snmpVersion"`
@@ -34,6 +37,15 @@ type AppConfig struct {
 	DarkTheme *bool `json:"darkTheme,omitempty"`
 
 	Hosts []HostConfig `json:"hosts"`
+}
+
+// DisplayName returns the label to show for this host: the optional Name if
+// set, otherwise the raw Host address.
+func (host *HostConfig) DisplayName() string {
+	if host.Name != "" {
+		return host.Name
+	}
+	return host.Host
 }
 
 // LoadConfig reads and validates the JSON configuration file at filePath,
