@@ -30,9 +30,6 @@ jobs:
           go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
           go install github.com/magefile/mage@latest
 
-      - name: Install UPX
-        run: choco install upx -y
-
       - name: Determine version
         id: version
         shell: pwsh
