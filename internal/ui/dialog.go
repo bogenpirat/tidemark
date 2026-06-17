@@ -22,7 +22,7 @@ import (
 // DialogResult is the outcome of the settings dialog.
 type DialogResult struct {
 	Saved  bool
-	Config config.AppConfig
+	Config config.HostConfig
 }
 
 const (
@@ -67,7 +67,7 @@ type settingsDialog struct {
 	cancelBtn widget.Clickable
 }
 
-func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.AppConfig) *settingsDialog {
+func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.HostConfig) *settingsDialog {
 	th := &LightTheme
 	if isDark {
 		th = &DarkTheme
@@ -90,9 +90,9 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.AppConfig) *
 	return d
 }
 
-func (d *settingsDialog) validate() (config.AppConfig, []string) {
+func (d *settingsDialog) validate() (config.HostConfig, []string) {
 	var errs []string
-	var cfg config.AppConfig
+	var cfg config.HostConfig
 
 	host := strings.TrimSpace(d.hosts.Text())
 	if host == "" {
@@ -333,7 +333,7 @@ func (d *settingsDialog) renderButton(gtx layout.Context, btn *widget.Clickable,
 
 // RunSettingsDialog opens a settings window, blocks until it is closed, and
 // returns the user's choice. Safe to call from any goroutine.
-func RunSettingsDialog(mat *material.Theme, cfg config.AppConfig, isDark bool) DialogResult {
+func RunSettingsDialog(mat *material.Theme, cfg config.HostConfig, isDark bool) DialogResult {
 	win := new(app.Window)
 	win.Option(
 		app.Title("Settings"),

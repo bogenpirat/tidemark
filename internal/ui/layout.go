@@ -2,7 +2,6 @@ package ui
 
 import (
 	"image"
-	"log/slog"
 
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -20,6 +19,7 @@ type RootLayout struct {
 	MatTheme     *material.Theme
 	Graph        *Graph
 	StatsPanel   *StatsPanel
+	ThemeButton  widget.Clickable
 	backdropTag  struct{}
 	settingsItem widget.Clickable
 	exitItem     widget.Clickable
@@ -35,6 +35,8 @@ func NewRootLayout(appState *AppState, matTheme *material.Theme) *RootLayout {
 }
 
 func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
+	appState := rootLayout.AppState
+
 	// Process events deferred from previous frame's handlers.
 	for {
 		ev, ok := gtx.Source.Event(pointer.Filter{Target: &rootLayout.backdropTag, Kinds: pointer.Press})
@@ -42,16 +44,20 @@ func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
 			break
 		}
 		if _, ok := ev.(pointer.Event); ok {
-			rootLayout.AppState.ContextMenuVisible = false
+			appState.ContextMenuVisible = false
 		}
 	}
 	for rootLayout.settingsItem.Clicked(gtx) {
-		rootLayout.AppState.ContextMenuVisible = false
-		rootLayout.AppState.SettingsRequested = true
+		appState.ContextMenuVisible = false
+		appState.SettingsRequested = true
+		appState.SettingsHostIndex = appState.ContextMenuHostIndex
 	}
 	for rootLayout.exitItem.Clicked(gtx) {
-		rootLayout.AppState.ContextMenuVisible = false
-		rootLayout.AppState.ExitRequested = true
+		appState.ContextMenuVisible = false
+		appState.ExitRequested = true
+	}
+	for rootLayout.ThemeButton.Clicked(gtx) {
+		appState.ToggleTheme()
 	}
 	for {
 		ev, ok := gtx.Source.Event(key.Filter{Name: key.NameEscape})
@@ -59,66 +65,121 @@ func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
 			break
 		}
 		if ke, ok := ev.(key.Event); ok && ke.State == key.Press {
-			rootLayout.AppState.ExitRequested = true
+			appState.ExitRequested = true
 		}
 	}
 
-	currentTheme := rootLayout.AppState.CurrentTheme
-	fillRect(gtx.Ops, currentTheme.Background,
-		image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y))
+	currentTheme := appState.CurrentTheme
 	totalWidth := gtx.Constraints.Max.X
 	totalHeight := gtx.Constraints.Max.Y
-	statsPanelWidth := gtx.Dp(statsPanelWidthDp)
+	fillRect(gtx.Ops, currentTheme.Background, image.Rect(0, 0, totalWidth, totalHeight))
 	if totalWidth <= 0 || totalHeight <= 0 {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
+
+	numHosts := len(appState.Hosts)
+	if numHosts == 0 {
+		return layout.Dimensions{Size: gtx.Constraints.Max}
+	}
+
+	statsPanelWidth := gtx.Dp(statsPanelWidthDp)
 	statsLeft := totalWidth - statsPanelWidth
 	graphWidth := statsLeft
 
-	// Compute the plot area width (the number of data points visible this frame).
-	// yAxisLabelWidthDp and rightPaddingDp are defined in graph.go (same package).
-	plotWidth := graphWidth - gtx.Dp(yAxisLabelWidthDp) - gtx.Dp(rightPaddingDp)
-	if plotWidth > 0 && plotWidth != rootLayout.AppState.GraphWidthPx {
-		rootLayout.AppState.GraphWidthPx = plotWidth
-		slog.Info("display window", "dataPoints", plotWidth, "seconds", plotWidth)
+	// Each host gets an equal-height horizontal band, stacked top to bottom.
+	rowHeight := totalHeight / numHosts
+	if rowHeight <= 0 {
+		rowHeight = totalHeight
 	}
 
-	// Register drag regions. The graph area (full height) and stats panel top (above
-	// button row) are draggable; the button row is excluded so it stays clickable.
-	// These regions return HTCAPTION from WM_NCHITTEST — right-clicks there arrive
-	// as WM_NCRBUTTONDOWN and are handled by platform_windows.go's custom WndProc.
+	// Map a pending right-click to the host row it landed in, so the context
+	// menu's Settings entry edits that host.
+	if appState.ContextMenuVisible {
+		hostIndex := appState.ContextMenuPos.Y / rowHeight
+		if hostIndex < 0 {
+			hostIndex = 0
+		}
+		if hostIndex >= numHosts {
+			hostIndex = numHosts - 1
+		}
+		appState.ContextMenuHostIndex = hostIndex
+	}
+
+	// The single theme toggle lives at the window's bottom-right; the drag
+	// region of the last row stops above it so it stays clickable (see
+	// .agents/constraints.md #2).
 	buttonRowTop := totalHeight - gtx.Dp(toggleButtonHeightDp) - gtx.Dp(12)
-	if graphWidth > 0 {
-		stack := clip.Rect(image.Rect(0, 0, graphWidth, totalHeight)).Push(gtx.Ops)
-		system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
-		stack.Pop()
-	}
-	if statsLeft > 0 && buttonRowTop > 0 {
-		stack := clip.Rect(image.Rect(statsLeft, 0, totalWidth, buttonRowTop)).Push(gtx.Ops)
-		system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
-		stack.Pop()
+
+	// Compute the plot area width once; it is identical for every row.
+	plotWidth := graphWidth - gtx.Dp(yAxisLabelWidthDp) - gtx.Dp(rightPaddingDp)
+
+	for hostIndex, host := range appState.Hosts {
+		rowTop := hostIndex * rowHeight
+		rowH := rowHeight
+		if hostIndex == numHosts-1 {
+			rowH = totalHeight - rowTop // last row absorbs the rounding remainder
+		}
+		if rowH <= 0 {
+			continue
+		}
+
+		if plotWidth > 0 && plotWidth != host.GraphWidthPx {
+			host.GraphWidthPx = plotWidth
+		}
+
+		// Register drag regions for this row. The graph area covers the full row
+		// height; the stats area covers down to the row bottom, except in the
+		// last row where it stops above the shared toggle button.
+		if graphWidth > 0 {
+			stack := clip.Rect(image.Rect(0, rowTop, graphWidth, rowTop+rowH)).Push(gtx.Ops)
+			system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
+			stack.Pop()
+		}
+		statsDragBottom := rowTop + rowH
+		if hostIndex == numHosts-1 && statsDragBottom > buttonRowTop {
+			statsDragBottom = buttonRowTop
+		}
+		if statsLeft > 0 && statsDragBottom > rowTop {
+			stack := clip.Rect(image.Rect(statsLeft, rowTop, totalWidth, statsDragBottom)).Push(gtx.Ops)
+			system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
+			stack.Pop()
+		}
+
+		if statsLeft > 0 {
+			statsOffsetStack := op.Offset(image.Pt(statsLeft, rowTop)).Push(gtx.Ops)
+			statsClipStack := clip.Rect(image.Rect(0, 0, statsPanelWidth, rowH)).Push(gtx.Ops)
+			statsGtx := gtx
+			statsGtx.Constraints = layout.Exact(image.Pt(statsPanelWidth, rowH))
+			rootLayout.StatsPanel.Layout(statsGtx, host)
+			statsClipStack.Pop()
+			statsOffsetStack.Pop()
+		}
+		if graphWidth > 0 {
+			graphOffsetStack := op.Offset(image.Pt(0, rowTop)).Push(gtx.Ops)
+			graphClipStack := clip.Rect(image.Rect(0, 0, graphWidth, rowH)).Push(gtx.Ops)
+			graphGtx := gtx
+			graphGtx.Constraints = layout.Exact(image.Pt(graphWidth, rowH))
+			rootLayout.Graph.Layout(graphGtx, host)
+			graphClipStack.Pop()
+			graphOffsetStack.Pop()
+		}
+
+		// Divider between stacked host rows.
+		if hostIndex > 0 {
+			drawHLine(gtx.Ops, currentTheme.BorderColor, 0, rowTop, totalWidth)
+		}
 	}
 
+	// Single dark/light toggle, centered in the stats column at the window's
+	// bottom edge.
 	if statsLeft > 0 {
-		statsOffsetStack := op.Offset(image.Pt(statsLeft, 0)).Push(gtx.Ops)
-		statsClipStack := clip.Rect(image.Rect(0, 0, statsPanelWidth, totalHeight)).Push(gtx.Ops)
-		statsGtx := gtx
-		statsGtx.Constraints = layout.Exact(image.Pt(statsPanelWidth, totalHeight))
-		rootLayout.StatsPanel.Layout(statsGtx)
-		statsClipStack.Pop()
-		statsOffsetStack.Pop()
-	}
-	if graphWidth > 0 {
-		graphOffsetStack := op.Offset(image.Pt(0, 0)).Push(gtx.Ops)
-		graphClipStack := clip.Rect(image.Rect(0, 0, graphWidth, totalHeight)).Push(gtx.Ops)
-		graphGtx := gtx
-		graphGtx.Constraints = layout.Exact(image.Pt(graphWidth, totalHeight))
-		rootLayout.Graph.Layout(graphGtx)
-		graphClipStack.Pop()
-		graphOffsetStack.Pop()
+		toggleOffsetStack := op.Offset(image.Pt(statsLeft, 0)).Push(gtx.Ops)
+		drawThemeToggleButton(gtx, rootLayout.MatTheme, currentTheme, &rootLayout.ThemeButton,
+			gtx.Dp(12), statsPanelWidth, totalHeight)
+		toggleOffsetStack.Pop()
 	}
 
-	if rootLayout.AppState.ContextMenuVisible {
+	if appState.ContextMenuVisible {
 		// Full-window backdrop registered last (highest z-order): any Gio pointer click
 		// outside the menu item area is blocked here and dismisses the menu.
 		{
@@ -126,10 +187,10 @@ func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
 			event.Op(gtx.Ops, &rootLayout.backdropTag)
 			area.Pop()
 		}
-		// Draw menu and register exit item (higher z-order than backdrop).
+		// Draw menu and register menu items (higher z-order than backdrop).
 		drawContextMenu(gtx, currentTheme, rootLayout.MatTheme,
 			&rootLayout.settingsItem, &rootLayout.exitItem,
-			rootLayout.AppState.ContextMenuPos)
+			appState.ContextMenuPos)
 	}
 
 	return layout.Dimensions{Size: gtx.Constraints.Max}
