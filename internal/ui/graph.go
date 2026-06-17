@@ -44,12 +44,13 @@ type Graph struct {
 	MatTheme *material.Theme
 }
 
-// Layout draws the full graph widget into the available constraints.
-func (graph *Graph) Layout(gtx layout.Context) layout.Dimensions {
+// Layout draws the full graph widget for one host into the available
+// constraints.
+func (graph *Graph) Layout(gtx layout.Context, host *HostState) layout.Dimensions {
 	currentTheme := graph.AppState.CurrentTheme
 	matTheme := graph.MatTheme
-	snapshot := graph.AppState.DataBuffer.Snapshot()
-	hostLabel := graph.AppState.HostLabel
+	snapshot := host.DataBuffer.Snapshot()
+	hostLabel := host.HostLabel
 
 	totalWidth := gtx.Constraints.Max.X
 	totalHeight := gtx.Constraints.Max.Y

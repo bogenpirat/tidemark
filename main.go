@@ -22,10 +22,23 @@ import (
 )
 
 const (
-	defaultWindowWidthDp  = 1000
-	defaultWindowHeightDp = 500
-	maxBufferSeconds      = 7200 // ring buffer capacity; enough for any realistic screen width
+	defaultWindowWidthDp = 1000
+	defaultRowHeightDp   = 250 // default per-host band height when none is saved
+	maxBufferSeconds     = 7200 // ring buffer capacity; enough for any realistic screen width
 )
+
+// hostRuntime bundles the per-host data buffer, UI state, and SNMP plumbing.
+// Each host's polling goroutine has its own cancel func so a single host can be
+// restarted (after a settings edit) without disturbing the others.
+type hostRuntime struct {
+	state   *ui.HostState
+	buffer  *buffer.RingBuffer[model.DataPoint]
+	outChan chan model.DataPoint
+	cancel  context.CancelFunc
+
+	pendingMu     sync.Mutex
+	pendingPoints []model.DataPoint
+}
 
 func main() {
 	setupLogging()
@@ -42,25 +55,59 @@ func main() {
 		slog.Error("failed to load configuration", "err", loadError)
 		os.Exit(1)
 	}
-	slog.Info("configuration loaded",
-		"host", appConfig.Host,
-		"port", appConfig.Port,
-		"timeoutMs", appConfig.TimeoutMs,
-	)
+	slog.Info("configuration loaded", "hosts", len(appConfig.Hosts))
 
-	dataBuffer := buffer.New[model.DataPoint](maxBufferSeconds)
-	appState := &ui.AppState{
-		DataBuffer:   dataBuffer,
-		CurrentTheme: &ui.DarkTheme,
-		HostLabel:    appConfig.Host,
-		IsDarkTheme:  true,
+	isDarkTheme := true
+	if appConfig.DarkTheme != nil {
+		isDarkTheme = *appConfig.DarkTheme
+	}
+	currentTheme := &ui.DarkTheme
+	if !isDarkTheme {
+		currentTheme = &ui.LightTheme
 	}
 
-	ctx, cancelContext := context.WithCancel(context.Background())
-	snmpOutputChannel := make(chan model.DataPoint, 10)
+	appState := &ui.AppState{
+		CurrentTheme: currentTheme,
+		IsDarkTheme:  isDarkTheme,
+	}
 
-	snmpService := snmpservice.NewService(appConfig)
-	go snmpService.Start(ctx, snmpOutputChannel)
+	window := new(app.Window)
+
+	// Build a runtime for each configured host: buffer, UI state, an SNMP
+	// output channel, a bridge goroutine, and an initial polling goroutine.
+	runtimes := make([]*hostRuntime, len(appConfig.Hosts))
+	for hostIndex := range appConfig.Hosts {
+		dataBuffer := buffer.New[model.DataPoint](maxBufferSeconds)
+		runtime := &hostRuntime{
+			state:   &ui.HostState{DataBuffer: dataBuffer, HostLabel: appConfig.Hosts[hostIndex].DisplayName()},
+			buffer:  dataBuffer,
+			outChan: make(chan model.DataPoint, 10),
+		}
+		runtimes[hostIndex] = runtime
+		appState.Hosts = append(appState.Hosts, runtime.state)
+
+		// Bridge: SNMP output → pending slice → repaint. The channel is shared
+		// across service restarts, so it is never closed.
+		go func(runtime *hostRuntime) {
+			for dataPoint := range runtime.outChan {
+				runtime.pendingMu.Lock()
+				runtime.pendingPoints = append(runtime.pendingPoints, dataPoint)
+				// Cap the staging slice so it cannot grow without bound if frame
+				// delivery stalls (e.g. window minimized): points beyond the ring
+				// buffer's capacity would be overwritten on drain anyway, so drop
+				// the oldest.
+				if len(runtime.pendingPoints) > maxBufferSeconds {
+					runtime.pendingPoints = runtime.pendingPoints[len(runtime.pendingPoints)-maxBufferSeconds:]
+				}
+				runtime.pendingMu.Unlock()
+				window.Invalidate()
+			}
+		}(runtime)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		runtime.cancel = cancel
+		go snmpservice.NewService(&appConfig.Hosts[hostIndex]).Start(ctx, runtime.outChan)
+	}
 
 	initialWidthDp := appConfig.WindowWidthDp
 	initialHeightDp := appConfig.WindowHeightDp
@@ -68,13 +115,11 @@ func main() {
 		initialWidthDp = defaultWindowWidthDp
 	}
 	if initialHeightDp <= 0 {
-		initialHeightDp = defaultWindowHeightDp
+		initialHeightDp = float32(defaultRowHeightDp * len(appConfig.Hosts))
 	}
 
-	windowTitle := "Tidemark — " + appConfig.Host
-	window := new(app.Window)
 	window.Option(
-		app.Title(windowTitle),
+		app.Title("Tidemark"),
 		app.Size(unit.Dp(initialWidthDp), unit.Dp(initialHeightDp)),
 		app.Decorated(false),
 	)
@@ -83,18 +128,6 @@ func main() {
 	if appConfig.WindowX != nil && appConfig.WindowY != nil {
 		SetInitialWindowPos(*appConfig.WindowX, *appConfig.WindowY)
 	}
-
-	var pendingMu sync.Mutex
-	var pendingPoints []model.DataPoint
-
-	go func() {
-		for dataPoint := range snmpOutputChannel {
-			pendingMu.Lock()
-			pendingPoints = append(pendingPoints, dataPoint)
-			pendingMu.Unlock()
-			window.Invalidate()
-		}
-	}()
 
 	fontCollection := gofont.Collection()
 	if symData, err := os.ReadFile(`C:\Windows\Fonts\seguisym.ttf`); err == nil {
@@ -124,13 +157,24 @@ func main() {
 			appConfig.WindowX = &lastPosX
 			appConfig.WindowY = &lastPosY
 		}
+		darkTheme := appState.IsDarkTheme
+		appConfig.DarkTheme = &darkTheme
 		if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
 			slog.Error("failed to save config", "err", saveErr)
 		}
 	}
 
+	stopAllHosts := func() {
+		for _, runtime := range runtimes {
+			if runtime.cancel != nil {
+				runtime.cancel()
+			}
+		}
+	}
+
 	dialogResultChan := make(chan ui.DialogResult, 1)
 	var dialogOpen bool
+	var dialogHostIndex int
 
 	var ops op.Ops
 	for {
@@ -140,7 +184,7 @@ func main() {
 		switch typedEvent := windowEvent.(type) {
 		case app.DestroyEvent:
 			slog.Info("window closed, shutting down")
-			cancelContext()
+			stopAllHosts()
 			persistConfig()
 			if typedEvent.Err != nil {
 				slog.Error("window destroyed with error", "err", typedEvent.Err)
@@ -159,37 +203,35 @@ func main() {
 			select {
 			case result := <-dialogResultChan:
 				dialogOpen = false
-				if result.Saved {
-					result.Config.WindowWidthDp = appConfig.WindowWidthDp
-					result.Config.WindowHeightDp = appConfig.WindowHeightDp
-					result.Config.WindowX = appConfig.WindowX
-					result.Config.WindowY = appConfig.WindowY
-					*appConfig = result.Config
-					appState.HostLabel = appConfig.Host
+				if result.Saved && dialogHostIndex >= 0 && dialogHostIndex < len(runtimes) {
+					appConfig.Hosts[dialogHostIndex] = result.Config
+					runtime := runtimes[dialogHostIndex]
+					runtime.state.HostLabel = result.Config.DisplayName()
 					if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
 						slog.Error("failed to save config", "err", saveErr)
 					}
-					// Restart the SNMP service with the new settings.
-					cancelContext()
-					ctx, cancelContext = context.WithCancel(context.Background())
-					dataBuffer = buffer.New[model.DataPoint](maxBufferSeconds)
-					appState.DataBuffer = dataBuffer
-					go snmpservice.NewService(appConfig).Start(ctx, snmpOutputChannel)
-					window.Option(app.Title("Tidemark — " + appConfig.Host))
+					// Restart this host's SNMP service with the new settings and a
+					// fresh buffer; other hosts keep running untouched.
+					runtime.cancel()
+					ctx, cancel := context.WithCancel(context.Background())
+					runtime.cancel = cancel
+					newBuffer := buffer.New[model.DataPoint](maxBufferSeconds)
+					runtime.buffer = newBuffer
+					runtime.state.DataBuffer = newBuffer
+					go snmpservice.NewService(&appConfig.Hosts[dialogHostIndex]).Start(ctx, runtime.outChan)
 				}
 			default:
 			}
 
-			pendingMu.Lock()
-			incomingPoints := pendingPoints
-			pendingPoints = nil
-			pendingMu.Unlock()
-
-			for _, dataPoint := range incomingPoints {
-				dataBuffer.Push(dataPoint)
-				slog.Debug("data point pushed to buffer",
-					"timestampMs", dataPoint.TimestampMs,
-					"isError", dataPoint.IsError)
+			// Drain each host's pending points into its buffer.
+			for _, runtime := range runtimes {
+				runtime.pendingMu.Lock()
+				incomingPoints := runtime.pendingPoints
+				runtime.pendingPoints = nil
+				runtime.pendingMu.Unlock()
+				for _, dataPoint := range incomingPoints {
+					runtime.buffer.Push(dataPoint)
+				}
 			}
 
 			if ok, pos := TakeRightClick(); ok {
@@ -204,10 +246,11 @@ func main() {
 			if appState.SettingsRequested && !dialogOpen {
 				appState.SettingsRequested = false
 				dialogOpen = true
-				cfg := *appConfig
+				dialogHostIndex = appState.SettingsHostIndex
+				hostCfg := appConfig.Hosts[dialogHostIndex]
 				isDark := appState.IsDarkTheme
 				go func() {
-					result := ui.RunSettingsDialog(matTheme, cfg, isDark)
+					result := ui.RunSettingsDialog(matTheme, hostCfg, isDark)
 					dialogResultChan <- result
 					window.Invalidate()
 				}()
@@ -215,7 +258,7 @@ func main() {
 
 			if appState.ExitRequested {
 				slog.Info("exit via context menu, shutting down")
-				cancelContext()
+				stopAllHosts()
 				persistConfig()
 				os.Exit(0)
 			}

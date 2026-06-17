@@ -7,18 +7,33 @@ import (
 	"tidemark/internal/model"
 )
 
-// AppState holds all mutable UI state. It is owned by the main goroutine and
-// must only be accessed from the Gio event loop.
+// HostState holds the per-target mutable UI state: its rolling data buffer,
+// display label, and the current plot width in pixels. Owned by the main
+// goroutine and only accessed from the Gio event loop.
+type HostState struct {
+	DataBuffer   *buffer.RingBuffer[model.DataPoint]
+	HostLabel    string
+	GraphWidthPx int // plot area pixel width; updated each frame by layout
+}
+
+// AppState holds the shared, program-wide mutable UI state. It is owned by the
+// main goroutine and must only be accessed from the Gio event loop.
 type AppState struct {
-	DataBuffer         *buffer.RingBuffer[model.DataPoint]
-	CurrentTheme       *Theme
-	HostLabel          string
-	IsDarkTheme        bool
-	GraphWidthPx       int // plot area pixel width; updated each frame by layout
+	// Hosts holds one HostState per monitored target, rendered stacked top to
+	// bottom in slice order.
+	Hosts        []*HostState
+	CurrentTheme *Theme
+	IsDarkTheme  bool
+
 	ContextMenuVisible bool
 	ContextMenuPos     image.Point
-	ExitRequested      bool
-	SettingsRequested  bool
+	// ContextMenuHostIndex is the host row the context menu was opened over.
+	ContextMenuHostIndex int
+
+	ExitRequested     bool
+	SettingsRequested bool
+	// SettingsHostIndex is the host whose settings dialog should open.
+	SettingsHostIndex int
 }
 
 // ToggleTheme switches between DarkTheme and LightTheme.

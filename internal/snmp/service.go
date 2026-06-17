@@ -23,19 +23,19 @@ func (snmpDebugLogger) Printf(format string, v ...any)    { slog.Debug(fmt.Sprin
 // SnmpService polls an SNMP v2c host at 1-second intervals and sends
 // DataPoints to an output channel.
 type SnmpService struct {
-	appConfig *config.AppConfig
+	hostConfig *config.HostConfig
 }
 
-// NewService creates an SnmpService configured from the provided AppConfig.
-func NewService(appConfig *config.AppConfig) *SnmpService {
-	return &SnmpService{appConfig: appConfig}
+// NewService creates an SnmpService configured from the provided HostConfig.
+func NewService(hostConfig *config.HostConfig) *SnmpService {
+	return &SnmpService{hostConfig: hostConfig}
 }
 
 // Start begins the polling loop in the calling goroutine. It sends DataPoints
 // to the out channel and returns when ctx is cancelled or a fatal error occurs.
 // The out channel is not closed by this function; callers should not rely on it.
 func (snmpService *SnmpService) Start(ctx context.Context, out chan<- model.DataPoint) {
-	snmpConfig := snmpService.appConfig
+	snmpConfig := snmpService.hostConfig
 
 	version := gosnmp.Version2c
 	if snmpConfig.SNMPVersion == "1" {

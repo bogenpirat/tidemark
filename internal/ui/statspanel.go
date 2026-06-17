@@ -23,11 +23,11 @@ const (
 )
 
 // StatsPanel is a Gio widget that displays current, max, and average
-// download and upload speeds, plus the dark/light mode toggle button.
+// download and upload speeds for a single host. The dark/light mode toggle is
+// rendered once, globally, by RootLayout rather than per panel.
 type StatsPanel struct {
-	AppState    *AppState
-	MatTheme    *material.Theme
-	ThemeButton widget.Clickable
+	AppState *AppState
+	MatTheme *material.Theme
 }
 
 // computedStats holds the derived statistics for a snapshot of data points.
@@ -40,17 +40,12 @@ type computedStats struct {
 	avgUploadBytesPerSec       float64
 }
 
-// Layout renders the statistics panel and the theme toggle button.
-func (statsPanel *StatsPanel) Layout(gtx layout.Context) layout.Dimensions {
-	// Handle theme toggle clicks before rendering.
-	for statsPanel.ThemeButton.Clicked(gtx) {
-		statsPanel.AppState.ToggleTheme()
-	}
-
+// Layout renders the statistics panel for one host.
+func (statsPanel *StatsPanel) Layout(gtx layout.Context, host *HostState) layout.Dimensions {
 	currentTheme := statsPanel.AppState.CurrentTheme
 	matTheme := statsPanel.MatTheme
-	snapshot := statsPanel.AppState.DataBuffer.Snapshot()
-	if visibleCount := statsPanel.AppState.GraphWidthPx; visibleCount > 0 && len(snapshot) > visibleCount {
+	snapshot := host.DataBuffer.Snapshot()
+	if visibleCount := host.GraphWidthPx; visibleCount > 0 && len(snapshot) > visibleCount {
 		snapshot = snapshot[len(snapshot)-visibleCount:]
 	}
 
@@ -78,10 +73,6 @@ func (statsPanel *StatsPanel) Layout(gtx layout.Context) layout.Dimensions {
 		"Upload ▲", currentTheme.UploadLabel, stats.currentUploadBytesPerSec,
 		stats.maxUploadBytesPerSec, stats.avgUploadBytesPerSec,
 		innerPadding, yOffset, panelWidth, lineHeight)
-
-	// Theme toggle button pinned to the bottom of the panel.
-	drawThemeToggleButton(gtx, matTheme, currentTheme, &statsPanel.ThemeButton,
-		innerPadding, panelWidth, panelHeight)
 
 	return layout.Dimensions{Size: image.Pt(panelWidth, panelHeight)}
 }
