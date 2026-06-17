@@ -92,6 +92,13 @@ func main() {
 			for dataPoint := range runtime.outChan {
 				runtime.pendingMu.Lock()
 				runtime.pendingPoints = append(runtime.pendingPoints, dataPoint)
+				// Cap the staging slice so it cannot grow without bound if frame
+				// delivery stalls (e.g. window minimized): points beyond the ring
+				// buffer's capacity would be overwritten on drain anyway, so drop
+				// the oldest.
+				if len(runtime.pendingPoints) > maxBufferSeconds {
+					runtime.pendingPoints = runtime.pendingPoints[len(runtime.pendingPoints)-maxBufferSeconds:]
+				}
 				runtime.pendingMu.Unlock()
 				window.Invalidate()
 			}
