@@ -1,0 +1,60 @@
+name: Release
+
+# Build a production binary and publish a GitHub Release whenever commits land
+# on the default branch. Each push gets a fresh, unique tag derived from the
+# version in versioninfo.json plus the workflow run number.
+on:
+  push:
+    branches: ["main"]
+
+# Allow the job to create tags and releases.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install build tools
+        run: |
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+          go install github.com/magefile/mage@latest
+
+      - name: Build release binary
+        run: mage release
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Get-Content versioninfo.json | ConvertFrom-Json).StringFileInfo.ProductVersion
+          # Strip a trailing ".0" build segment (1.0.0.0 -> 1.0.0) for a clean base.
+          $base = ($v -replace '\.0$', '')
+          $tag  = "v$base.${{ github.run_number }}"
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "Release tag: $tag"
+
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $files = "tidemark.exe", "example-config.json", "README.md"
+          Compress-Archive -Path $files -DestinationPath dist/tidemark-windows-amd64.zip -Force
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Tidemark ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: dist/tidemark-windows-amd64.zip
