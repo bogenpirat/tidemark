@@ -170,13 +170,14 @@ func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 
-	// Single dark/light toggle, centered in the stats column at the window's
-	// bottom edge.
-	if statsLeft > 0 {
-		toggleOffsetStack := op.Offset(image.Pt(statsLeft, 0)).Push(gtx.Ops)
+	// Single dark/light toggle, pinned to the window's bottom-right corner
+	// with a margin.
+	{
+		margin := gtx.Dp(12)
+		buttonX := totalWidth - gtx.Dp(toggleButtonWidthDp) - margin
+		buttonY := totalHeight - gtx.Dp(toggleButtonHeightDp) - margin
 		drawThemeToggleButton(gtx, rootLayout.MatTheme, currentTheme, &rootLayout.ThemeButton,
-			gtx.Dp(12), statsPanelWidth, totalHeight)
-		toggleOffsetStack.Pop()
+			buttonX, buttonY)
 	}
 
 	if appState.ContextMenuVisible {

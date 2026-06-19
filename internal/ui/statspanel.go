@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	statsPanelWidthDp    = 150
+	statsPanelWidthDp    = 120
 	toggleButtonHeightDp = 28
 	toggleButtonWidthDp  = 40
 )
@@ -58,37 +58,40 @@ func (statsPanel *StatsPanel) Layout(gtx layout.Context, host *HostState) layout
 
 	innerPadding := gtx.Dp(12)
 	lineHeight := gtx.Dp(18)
-	sectionGap := gtx.Dp(12)
+	sectionGap := gtx.Dp(14)
 
 	yOffset := innerPadding
 
 	yOffset = renderStatSection(gtx, matTheme, currentTheme,
-		"Download ▼", currentTheme.DownloadLabel, stats.currentDownloadBytesPerSec,
-		stats.maxDownloadBytesPerSec, stats.avgDownloadBytesPerSec,
+		"Current", stats.currentDownloadBytesPerSec, stats.currentUploadBytesPerSec,
+		innerPadding, yOffset, panelWidth, lineHeight)
+
+	yOffset += sectionGap
+
+	yOffset = renderStatSection(gtx, matTheme, currentTheme,
+		"Average", stats.avgDownloadBytesPerSec, stats.avgUploadBytesPerSec,
 		innerPadding, yOffset, panelWidth, lineHeight)
 
 	yOffset += sectionGap
 
 	renderStatSection(gtx, matTheme, currentTheme,
-		"Upload ▲", currentTheme.UploadLabel, stats.currentUploadBytesPerSec,
-		stats.maxUploadBytesPerSec, stats.avgUploadBytesPerSec,
+		"Max", stats.maxDownloadBytesPerSec, stats.maxUploadBytesPerSec,
 		innerPadding, yOffset, panelWidth, lineHeight)
 
 	return layout.Dimensions{Size: image.Pt(panelWidth, panelHeight)}
 }
 
-// drawThemeToggleButton renders the dark/light mode toggle at the bottom of the panel.
+// drawThemeToggleButton renders the dark/light mode toggle at the given
+// top-left position in window coordinates.
 func drawThemeToggleButton(
 	gtx layout.Context,
 	matTheme *material.Theme,
 	currentTheme *Theme,
 	button *widget.Clickable,
-	innerPadding, panelWidth, panelHeight int,
+	buttonX, buttonY int,
 ) {
 	buttonHeight := gtx.Dp(toggleButtonHeightDp)
 	buttonWidth := gtx.Dp(toggleButtonWidthDp)
-	buttonX := (panelWidth - buttonWidth) / 2
-	buttonY := panelHeight - buttonHeight - innerPadding
 
 	if buttonWidth <= 0 || buttonY <= 0 {
 		return
@@ -116,35 +119,30 @@ func drawThemeToggleButton(
 	offsetStack.Pop()
 }
 
-// renderStatSection draws one labeled section (Download or Upload) with
-// Current, Max, and Avg rows. Returns the y offset after the last row.
+// renderStatSection draws one labeled section (Current, Average, or Max) with
+// a download row and an upload row, each colored with its direction color.
+// Returns the y offset after the last row.
 func renderStatSection(
 	gtx layout.Context,
 	matTheme *material.Theme,
 	currentTheme *Theme,
 	sectionTitle string,
-	titleColor color.NRGBA,
-	currentBytesPerSec, maxBytesPerSec, avgBytesPerSec float64,
+	downloadBytesPerSec, uploadBytesPerSec float64,
 	xPadding, yStart, panelWidth, lineHeight int,
 ) int {
 	contentWidth := panelWidth - xPadding*2
 
-	drawPanelRow(gtx, matTheme, titleColor, sectionTitle,
+	drawPanelRow(gtx, matTheme, currentTheme.PanelText, sectionTitle,
 		xPadding, yStart, contentWidth, lineHeight, unit.Sp(13))
 	yStart += lineHeight + 2
 
-	drawPanelRow(gtx, matTheme, currentTheme.PanelText,
-		"Current: "+units.FormatBytesPerSec(currentBytesPerSec),
+	drawPanelRow(gtx, matTheme, currentTheme.DownloadLabel,
+		"▼ "+units.FormatBytesPerSec(downloadBytesPerSec),
 		xPadding, yStart, contentWidth, lineHeight, unit.Sp(11))
 	yStart += lineHeight
 
-	drawPanelRow(gtx, matTheme, currentTheme.PanelText,
-		"Max:     "+units.FormatBytesPerSec(maxBytesPerSec),
-		xPadding, yStart, contentWidth, lineHeight, unit.Sp(11))
-	yStart += lineHeight
-
-	drawPanelRow(gtx, matTheme, currentTheme.PanelText,
-		"Avg:     "+units.FormatBytesPerSec(avgBytesPerSec),
+	drawPanelRow(gtx, matTheme, currentTheme.UploadLabel,
+		"▲ "+units.FormatBytesPerSec(uploadBytesPerSec),
 		xPadding, yStart, contentWidth, lineHeight, unit.Sp(11))
 	yStart += lineHeight
 
