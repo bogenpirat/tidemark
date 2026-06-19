@@ -34,12 +34,28 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $v = (Get-Content versioninfo.json | ConvertFrom-Json).StringFileInfo.ProductVersion
-          # Strip a trailing ".0" build segment (1.0.0.0 -> 1.0.0) for a clean base.
-          $base = ($v -replace '\.0$', '')
-          $tag  = "v$base.${{ github.run_number }}"
+          $json  = Get-Content versioninfo.json | ConvertFrom-Json
+          # Take MAJOR.MINOR from versioninfo and use the run number as the
+          # PATCH for clean 3-segment semver (e.g. 1.0.0.0 -> v1.0.<run>).
+          $parts = $json.StringFileInfo.ProductVersion.Split('.')
+          $major = [int]$parts[0]
+          $minor = [int]$parts[1]
+          $patch = [int]"${{ github.run_number }}"
+          $tag   = "v$major.$minor.$patch"
           "tag=$tag" >> $env:GITHUB_OUTPUT
           Write-Host "Release tag: $tag"
+
+          # Sync the embedded EXE version metadata with the release tag. Windows
+          # version fields are 4-part (Major.Minor.Patch.Build); the run number
+          # drives Patch and Build stays 0. This edits the CI checkout only, so
+          # the repo's versioninfo.json stays a clean template.
+          foreach ($info in @($json.FixedFileInfo.FileVersion, $json.FixedFileInfo.ProductVersion)) {
+            $info.Major = $major; $info.Minor = $minor; $info.Patch = $patch; $info.Build = 0
+          }
+          $json.StringFileInfo.ProductVersion = "$major.$minor.$patch.0"
+          $json.StringFileInfo.FileVersion    = "$major.$minor.$patch.0"
+          $json | ConvertTo-Json -Depth 10 | Set-Content versioninfo.json
+          Write-Host "Embedded version: $major.$minor.$patch.0"
 
       # Both mage targets emit tidemark.exe, so package each build before the
       # next overwrites it. Each zip is self-contained and runnable on its own.
