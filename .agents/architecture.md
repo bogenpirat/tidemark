@@ -2,7 +2,7 @@
 
 ## What the program does
 
-Reads one JSON config file, opens an undecorated borderless window, polls an SNMP v2c host once per second, and renders a live scrolling graph of download (red) and upload (green) throughput. A narrow stats panel on the right shows current/max/avg and a theme-toggle button. Right-clicking anywhere opens a context menu (Settings / Exit). Settings opens a second Gio window for editing the config. Escape exits immediately. Intended to run as 3 side-by-side instances for 3 hosts.
+Reads one JSON config file, opens an undecorated borderless window, polls each configured host once per second — via SNMP v1/v2c or via SSH (reading `/sys/class/net/<iface>/statistics/{rx,tx}_bytes` on any Linux host) — and renders a live scrolling graph of download (red) and upload (green) throughput. A narrow stats panel on the right shows current/max/avg and a theme-toggle button. Right-clicking anywhere opens a context menu (Settings / Exit). Settings opens a second Gio window for editing the config. Escape exits immediately. Intended to run as 3 side-by-side instances for 3 hosts.
 
 ## Goroutines
 
@@ -12,11 +12,12 @@ main goroutine
         ├── app.FrameEvent  → drains pendingPoints, pushes to ring buffer, renders
         └── app.DestroyEvent → cancel context, save config, exit
 
-snmp goroutine (go snmpService.Start)
-  └── polls every 1 second, sends model.DataPoint to snmpOutputChannel (buffered, cap 10)
+polling goroutine, one per host (startHostService → go snmpService.Start OR go sshService.Start,
+                                 selected by HostConfig.Protocol)
+  └── polls every 1 second, sends model.DataPoint to the host's output channel (buffered, cap 10)
 
 bridge goroutine (go func)
-  └── reads snmpOutputChannel, appends to pendingPoints slice, calls window.Invalidate()
+  └── reads the output channel, appends to pendingPoints slice, calls window.Invalidate()
 ```
 
 **Concurrency rule**: `pendingPoints` is the only shared state. It is protected by `pendingMu` (sync.Mutex). The ring buffer (`DataBuffer`) is only accessed from the main goroutine (written in FrameEvent, read by Gio layout calls in the same goroutine). No other sharing.
@@ -24,10 +25,10 @@ bridge goroutine (go func)
 ## Data flow
 
 ```
-SNMP host
-  → gosnmp.Get (in snmp goroutine)
-  → computeCounterDelta (bytes/sec from raw counter diff)
-  → model.DataPoint  →  snmpOutputChannel  →  pendingPoints  (bridge goroutine)
+SNMP host                                  Linux host (ssh)
+  → gosnmp.Get (in polling goroutine)        → session.Output("cat …/rx_bytes …/tx_bytes")
+  → counter.ComputeDelta (bytes/sec from raw counter diff)
+  → model.DataPoint  →  output channel  →  pendingPoints  (bridge goroutine)
                                                      ↓
                                               window.Invalidate()
                                                      ↓

@@ -120,6 +120,21 @@ Fields with `omitempty` (`windowWidthDp`, `windowHeightDp`) are omitted if zero,
 
 **Do not** try to detect right-clicks in drag regions using Gio pointer events — they will never fire for `WM_NCRBUTTONDOWN`.
 
+## 13. Mouse hover in HTCAPTION regions comes from WM_NCMOUSEMOVE, and leave events need TrackMouseEvent
+
+Like right-clicks (constraint #12), mouse *moves* over `ActionMove` drag regions arrive
+as non-client messages (`WM_NCMOUSEMOVE`) that Gio never exposes as pointer events. The
+graph's hover tooltip is therefore fed from the WndProc subclass in
+`platform_windows.go`: `WM_NCMOUSEMOVE`/`WM_MOUSEMOVE` update a mutex-guarded position
+(`HoverPosition()` peeks it each frame from `main.go`), and the messages are **passed
+through** to the original WndProc so dragging keeps working.
+
+**Gotcha**: Windows does not send `WM_NCMOUSELEAVE`/`WM_MOUSELEAVE` unless you arm them
+with `TrackMouseEvent` — and for the non-client variant the `TME_NONCLIENT` flag is
+required. The arm is one-shot: it must be re-requested after every leave, so
+`requestMouseLeaveEvent` is called on every move message. Without this, the tooltip
+would stick around after the mouse exits the window.
+
 ## 11. Build constraints for platform-specific code
 
 `platform_windows.go` uses `//go:build windows` and references `app.Win32ViewEvent` which only exists in `gioui.org/app/os_windows.go`. Without this constraint the package won't compile on non-Windows. The companion `platform.go` uses `//go:build !windows` to provide a no-op stub, keeping the cross-platform build graph valid.

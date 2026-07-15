@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -54,15 +55,20 @@ type settingsDialog struct {
 	closing bool
 	errors  []string
 
-	name        widget.Editor
-	hosts       widget.Editor
-	community   widget.Editor
-	port        widget.Editor
-	snmpVersion widget.Editor
-	dlOID       widget.Editor
-	ulOID       widget.Editor
-	timeoutMs   widget.Editor
-	retries     widget.Editor
+	name      widget.Editor
+	hosts     widget.Editor
+	protocol  widget.Editor
+	port      widget.Editor
+	community widget.Editor
+	dlOID     widget.Editor
+	ulOID     widget.Editor
+	username  widget.Editor
+	keyFile   widget.Editor
+	iface     widget.Editor
+	hostKey   widget.Editor
+	lanSubnet widget.Editor
+	timeoutMs widget.Editor
+	retries   widget.Editor
 
 	saveBtn   widget.Clickable
 	cancelBtn widget.Clickable
@@ -75,18 +81,24 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.HostConfig) 
 	}
 	d := &settingsDialog{mat: mat, theme: th}
 	for _, ed := range []*widget.Editor{
-		&d.name, &d.hosts, &d.community, &d.port, &d.snmpVersion,
-		&d.dlOID, &d.ulOID, &d.timeoutMs, &d.retries,
+		&d.name, &d.hosts, &d.protocol, &d.port, &d.community,
+		&d.dlOID, &d.ulOID, &d.username, &d.keyFile, &d.iface, &d.hostKey,
+		&d.lanSubnet, &d.timeoutMs, &d.retries,
 	} {
 		ed.SingleLine = true
 	}
 	d.name.SetText(cfg.Name)
 	d.hosts.SetText(cfg.Host)
-	d.community.SetText(cfg.Community)
+	d.protocol.SetText(cfg.Protocol)
 	d.port.SetText(fmt.Sprintf("%d", cfg.Port))
-	d.snmpVersion.SetText(cfg.SNMPVersion)
+	d.community.SetText(cfg.Community)
 	d.dlOID.SetText(cfg.DownloadOID)
 	d.ulOID.SetText(cfg.UploadOID)
+	d.username.SetText(cfg.Username)
+	d.keyFile.SetText(cfg.KeyFile)
+	d.iface.SetText(cfg.Interface)
+	d.hostKey.SetText(cfg.HostKey)
+	d.lanSubnet.SetText(cfg.LanSubnet)
 	d.timeoutMs.SetText(fmt.Sprintf("%d", cfg.TimeoutMs))
 	d.retries.SetText(fmt.Sprintf("%d", cfg.Retries))
 	return d
@@ -104,11 +116,12 @@ func (d *settingsDialog) validate() (config.HostConfig, []string) {
 	}
 	cfg.Host = host
 
-	comm := strings.TrimSpace(d.community.Text())
-	if comm == "" {
-		errs = append(errs, "Community: required")
+	proto := strings.TrimSpace(d.protocol.Text())
+	if proto != config.ProtocolSNMP1 && proto != config.ProtocolSNMP2c && proto != config.ProtocolSSH {
+		errs = append(errs, "Protocol: must be \"snmp1\", \"snmp2c\", or \"ssh\"")
+	} else {
+		cfg.Protocol = proto
 	}
-	cfg.Community = comm
 
 	if p, err := strconv.ParseUint(strings.TrimSpace(d.port.Text()), 10, 16); err != nil || p == 0 {
 		errs = append(errs, "Port: must be 1–65535")
@@ -116,25 +129,41 @@ func (d *settingsDialog) validate() (config.HostConfig, []string) {
 		cfg.Port = uint16(p)
 	}
 
-	ver := strings.TrimSpace(d.snmpVersion.Text())
-	if ver != "1" && ver != "2c" {
-		errs = append(errs, "SNMP Version: must be \"1\" or \"2c\"")
-	} else {
-		cfg.SNMPVersion = ver
+	// Fields for the protocol not in use are carried over unvalidated so that
+	// switching protocols back and forth is non-destructive.
+	cfg.Community = strings.TrimSpace(d.community.Text())
+	cfg.DownloadOID = strings.TrimSpace(d.dlOID.Text())
+	cfg.UploadOID = strings.TrimSpace(d.ulOID.Text())
+	cfg.Username = strings.TrimSpace(d.username.Text())
+	cfg.KeyFile = strings.TrimSpace(d.keyFile.Text())
+	cfg.Interface = strings.TrimSpace(d.iface.Text())
+	cfg.HostKey = strings.TrimSpace(d.hostKey.Text())
+	cfg.LanSubnet = strings.TrimSpace(d.lanSubnet.Text())
+
+	if cfg.Protocol == config.ProtocolSNMP1 || cfg.Protocol == config.ProtocolSNMP2c {
+		if cfg.Community == "" {
+			errs = append(errs, "Community: required")
+		}
+		if !isValidOID(cfg.DownloadOID) {
+			errs = append(errs, "Download OID: must be dotted-numeric (e.g. 1.3.6.1.2.1.31.1.1.1.6.1)")
+		}
+		if !isValidOID(cfg.UploadOID) {
+			errs = append(errs, "Upload OID: must be dotted-numeric (e.g. 1.3.6.1.2.1.31.1.1.1.10.1)")
+		}
 	}
 
-	dlOID := strings.TrimSpace(d.dlOID.Text())
-	if !isValidOID(dlOID) {
-		errs = append(errs, "Download OID: must be dotted-numeric (e.g. 1.3.6.1.2.1.31.1.1.1.6.1)")
-	} else {
-		cfg.DownloadOID = dlOID
-	}
-
-	ulOID := strings.TrimSpace(d.ulOID.Text())
-	if !isValidOID(ulOID) {
-		errs = append(errs, "Upload OID: must be dotted-numeric (e.g. 1.3.6.1.2.1.31.1.1.1.10.1)")
-	} else {
-		cfg.UploadOID = ulOID
+	if cfg.Protocol == config.ProtocolSSH {
+		if cfg.KeyFile == "" {
+			errs = append(errs, "Key File: required")
+		}
+		if cfg.Interface == "" {
+			errs = append(errs, "Interface: required")
+		}
+		if cfg.LanSubnet != "" {
+			if _, err := netip.ParsePrefix(cfg.LanSubnet); err != nil {
+				errs = append(errs, "LAN Subnet: must be a CIDR like 192.168.1.0/24 (or empty)")
+			}
+		}
 	}
 
 	if ms, err := strconv.Atoi(strings.TrimSpace(d.timeoutMs.Text())); err != nil || ms <= 0 {
@@ -192,15 +221,25 @@ func (d *settingsDialog) Layout(gtx layout.Context) dialogAction {
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Host", &d.hosts, "e.g., 192.168.1.1")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
-		layout.Rigid(d.fieldRow("Community", &d.community, "e.g., public")),
+		layout.Rigid(d.fieldRow("Protocol", &d.protocol, "snmp1, snmp2c, or ssh")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Port", &d.port, "1–65535")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
-		layout.Rigid(d.fieldRow("SNMP Version", &d.snmpVersion, "1 or 2c")),
+		layout.Rigid(d.fieldRow("Community", &d.community, "snmp only, e.g., public")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
-		layout.Rigid(d.fieldRow("Download OID", &d.dlOID, "1.3.6.1.2.1.31.1.1.1.6.x")),
+		layout.Rigid(d.fieldRow("Download OID", &d.dlOID, "snmp only, 1.3.6.1.2.1.31.1.1.1.6.x")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
-		layout.Rigid(d.fieldRow("Upload OID", &d.ulOID, "1.3.6.1.2.1.31.1.1.1.10.x")),
+		layout.Rigid(d.fieldRow("Upload OID", &d.ulOID, "snmp only, 1.3.6.1.2.1.31.1.1.1.10.x")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
+		layout.Rigid(d.fieldRow("Username", &d.username, "ssh only, default root")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
+		layout.Rigid(d.fieldRow("Key File", &d.keyFile, "ssh only, path to private key")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
+		layout.Rigid(d.fieldRow("Interface", &d.iface, "ssh only, e.g., pppoe-wan")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
+		layout.Rigid(d.fieldRow("Host Key", &d.hostKey, "ssh only, optional SHA256 fingerprint")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
+		layout.Rigid(d.fieldRow("LAN Subnet", &d.lanSubnet, "ssh only, optional, e.g., 192.168.1.0/24")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Timeout (ms)", &d.timeoutMs, "e.g., 3000")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
@@ -343,7 +382,7 @@ func RunSettingsDialog(mat *material.Theme, cfg config.HostConfig, isDark bool) 
 	win := new(app.Window)
 	win.Option(
 		app.Title("Settings"),
-		app.Size(unit.Dp(520), unit.Dp(500)),
+		app.Size(unit.Dp(520), unit.Dp(680)),
 	)
 
 	d := newSettingsDialog(mat, isDark, cfg)

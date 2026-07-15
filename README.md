@@ -6,8 +6,8 @@
 
 **A lightweight, always-on-top realtime network throughput monitor for Windows.**
 
-Tidemark polls an SNMP host once per second and plots live upload/download
-throughput on a smooth, scrolling graph — one compact window per device.
+Tidemark polls a host once per second — via SNMP or SSH — and plots live
+upload/download throughput on a smooth, scrolling graph — one compact window per device.
 
 [![Build](https://github.com/bogenpirat/tidemark/actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml)
 [![Release](https://github.com/bogenpirat/tidemark/actions/workflows/release.yml/badge.svg)](../../actions/workflows/release.yml)
@@ -22,10 +22,12 @@ throughput on a smooth, scrolling graph — one compact window per device.
 ## ✨ Features
 
 - **Live throughput graph** — up/download rates sampled every second on a scrolling chart.
+- **SNMP and SSH** — poll any SNMP v1/v2c device, or any Linux host over SSH with key-file authentication.
 - **Multiple hosts** — monitor several interfaces in one window, or run separate instances side by side.
 - **Tiny & frameless** — a borderless window that remembers its size and position.
 - **Dark & light themes** — toggle from the right-click context menu.
 - **At-a-glance stats** — current, max and average rate per host.
+- **Top talkers** — hover the graph to see which LAN hosts downloaded and uploaded the most in any second (SSH-polled routers).
 - **Self-contained** — a single `tidemark.exe`, no installer, no runtime, no dependencies.
 
 ## 🚀 Quick start
@@ -51,7 +53,7 @@ Copy-Item example-config.json my-router.json
 notepad my-router.json
 ```
 
-A minimal config only needs a host and an SNMP community string:
+A minimal SNMP config only needs a host and a community string:
 
 ```json
 {
@@ -71,6 +73,23 @@ A minimal config only needs a host and an SNMP community string:
 > `ifHCOutOctets` counters for interface index **1**. The trailing `.1` is the
 > interface index — change it (`.2`, `.3`, …) to monitor a different port. Use a
 > tool like `snmpwalk` to discover which index maps to which interface on your device.
+
+A minimal SSH config needs a private key file and the name of the network
+interface to monitor on the remote Linux host:
+
+```json
+{
+  "hosts": [
+    {
+      "host": "192.168.1.1",
+      "name": "Main Router",
+      "protocol": "ssh",
+      "keyFile": "C:\\Users\\me\\.ssh\\id_ed25519",
+      "interface": "pppoe-wan"
+    }
+  ]
+}
+```
 
 ### 3. Run it
 
@@ -117,17 +136,95 @@ The config file is a top-level object with optional window/theme settings plus a
 
 ### Per-host options
 
-| Field         | Type   | Required | Default                          | Description                                  |
-|---------------|--------|----------|----------------------------------|----------------------------------------------|
-| `host`        | string | ✅       | —                                | IP address or hostname of the SNMP device.   |
-| `community`   | string | ✅       | —                                | SNMP community string.                        |
-| `name`        | string |          | (the host address)               | Friendly label shown on the graph.           |
-| `port`        | number |          | `161`                            | SNMP UDP port.                               |
-| `snmpVersion` | string |          | `"2c"`                           | SNMP version (`1` or `2c`).                  |
-| `downloadOID` | string |          | `1.3.6.1.2.1.31.1.1.1.6.1`       | OID for the inbound (download) byte counter. |
-| `uploadOID`   | string |          | `1.3.6.1.2.1.31.1.1.1.10.1`      | OID for the outbound (upload) byte counter.  |
-| `timeoutMs`   | number |          | `3000`                           | Per-poll SNMP timeout in milliseconds.       |
-| `retries`     | number |          | `1`                              | SNMP retry count per poll.                   |
+| Field         | Type   | Required   | Default                          | Description                                            |
+|---------------|--------|------------|----------------------------------|--------------------------------------------------------|
+| `host`        | string | ✅         | —                                | IP address or hostname of the device.                  |
+| `protocol`    | string |            | `"snmp2c"`                       | Polling protocol: `snmp1`, `snmp2c`, or `ssh`.          |
+| `name`        | string |            | (the host address)               | Friendly label shown on the graph.                     |
+| `port`        | number |            | `161` (SNMP) / `22` (SSH)        | SNMP UDP port or SSH TCP port.                          |
+| `community`   | string | ✅ (SNMP)  | —                                | SNMP community string.                                  |
+| `downloadOID` | string |            | `1.3.6.1.2.1.31.1.1.1.6.1`       | SNMP only. OID for the inbound (download) byte counter. |
+| `uploadOID`   | string |            | `1.3.6.1.2.1.31.1.1.1.10.1`      | SNMP only. OID for the outbound (upload) byte counter.  |
+| `username`    | string |            | `"root"`                         | SSH only. Login user on the remote host.                |
+| `keyFile`     | string | ✅ (SSH)   | —                                | SSH only. Path to the private key file used to authenticate. |
+| `interface`   | string | ✅ (SSH)   | —                                | SSH only. Network interface to monitor on the remote host (e.g. `pppoe-wan`, `eth0`). |
+| `hostKey`     | string |            | (accept any)                     | SSH only. Expected SHA256 fingerprint of the server's host key. When unset, any key is accepted and the fingerprint is logged so you can pin it here. |
+| `lanSubnet`   | string |            | (disabled)                       | SSH only. CIDR of the LAN behind the polled router (e.g. `192.168.1.0/24`). Enables per-second top-talker tracking (see below). |
+| `timeoutMs`   | number |            | `3000`                           | Per-poll timeout in milliseconds.                       |
+| `retries`     | number |            | `1`                              | Retry count per poll.                                   |
+
+### Monitoring over SSH
+
+With `"protocol": "ssh"`, Tidemark works with **any Linux host** it can reach
+over SSH. It opens one connection at startup, authenticates with the given
+private key file, and keeps the connection alive. Once per second it reads the
+kernel's interface byte counters:
+
+```
+/sys/class/net/<interface>/statistics/rx_bytes   → download
+/sys/class/net/<interface>/statistics/tx_bytes   → upload
+```
+
+This is a plain file read of two kernel counters — it terminates immediately
+and adds no measurable load on the remote machine. The per-second deltas are
+graphed exactly like SNMP counter deltas, and a dropped connection shows up as
+error samples on the graph until the host is reachable again (Tidemark
+reconnects automatically).
+
+**Host key pinning.** By default any host key is accepted, and the server's
+SHA256 fingerprint is logged on connect. To protect against man-in-the-middle
+attacks, pin the fingerprint in the host's `hostKey` field — from then on a
+mismatching host key makes the connection fail. To fetch the fingerprint(s),
+run Tidemark with the `-hostkey` switch — it connects to each ssh host in the
+config (no authentication needed), prints the fingerprints, and exits without
+opening a window:
+
+```powershell
+.\tidemark.exe -hostkey my-router.json
+# Main Router (192.168.1.1:22): SHA256:NcW9jUnKvRk3…
+```
+
+### Top talkers: which LAN host is using the bandwidth? (SSH only)
+
+When you monitor a **router** over SSH (e.g. OpenWrt), Tidemark can additionally
+record, for every second, the LAN-internal IPs that caused the most traffic —
+tracked separately for download and upload. Enable it by setting `lanSubnet`
+to your LAN's CIDR:
+
+```json
+{
+  "host": "192.168.1.1",
+  "protocol": "ssh",
+  "keyFile": "C:\\Users\\me\\.ssh\\id_ed25519",
+  "interface": "pppoe-wan",
+  "lanSubnet": "192.168.1.0/24"
+}
+```
+
+**Hover over the graph** to see it: a tooltip shows, for the second under the
+cursor, the LAN IP that downloaded the most (▼) and the one that uploaded the
+most (▲), each with its byte rate — for any second still in the graph's
+history, not just the current one.
+
+**How it works.** Each per-second poll also runs a tiny `awk` aggregation over
+the router's connection-tracking table (`/proc/net/nf_conntrack`), which holds
+cumulative per-direction byte counters per connection. Each connection's
+send and receive bytes are attributed to its originating (pre-NAT) LAN IP,
+and Tidemark diffs these totals second-over-second — the same cheap
+counter-delta approach used for the bandwidth graph itself. The load on the
+router is negligible.
+
+**Requirements & accuracy:**
+
+- Connection byte accounting must be enabled on the router
+  (`net.netfilter.nf_conntrack_acct=1`). This is the **default on OpenWrt**.
+  If it's off, or `/proc/net/nf_conntrack` doesn't exist, bandwidth monitoring
+  continues to work — you just get no top-talker info.
+- With hardware/software **flow offloading** enabled, conntrack byte counters
+  update lazily, so per-second attribution becomes coarser.
+- Connections that expire mid-second lose their final bytes; the attribution
+  is a close approximation, not an exact accounting.
+- The hover tooltip is currently available on **Windows** builds.
 
 ## 🛠️ Building from source
 

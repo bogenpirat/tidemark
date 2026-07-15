@@ -155,11 +155,18 @@ func (rootLayout *RootLayout) Layout(gtx layout.Context) layout.Dimensions {
 			statsOffsetStack.Pop()
 		}
 		if graphWidth > 0 {
+			// Hover position relative to this row's graph origin; only valid when
+			// the mouse is inside this row's graph area and no menu is open.
+			hoverPos := image.Pt(appState.HoverPos.X, appState.HoverPos.Y-rowTop)
+			hoverValid := appState.HoverValid && !appState.ContextMenuVisible &&
+				appState.HoverPos.X >= 0 && appState.HoverPos.X < graphWidth &&
+				appState.HoverPos.Y >= rowTop && appState.HoverPos.Y < rowTop+rowH
+
 			graphOffsetStack := op.Offset(image.Pt(0, rowTop)).Push(gtx.Ops)
 			graphClipStack := clip.Rect(image.Rect(0, 0, graphWidth, rowH)).Push(gtx.Ops)
 			graphGtx := gtx
 			graphGtx.Constraints = layout.Exact(image.Pt(graphWidth, rowH))
-			rootLayout.Graph.Layout(graphGtx, host)
+			rootLayout.Graph.Layout(graphGtx, host, hoverPos, hoverValid)
 			graphClipStack.Pop()
 			graphOffsetStack.Pop()
 		}

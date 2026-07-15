@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"net"
 	"time"
 
 	"tidemark/internal/config"
+	"tidemark/internal/counter"
 	"tidemark/internal/model"
 
 	gosnmp "github.com/gosnmp/gosnmp"
@@ -38,7 +38,7 @@ func (snmpService *SnmpService) Start(ctx context.Context, out chan<- model.Data
 	snmpConfig := snmpService.hostConfig
 
 	version := gosnmp.Version2c
-	if snmpConfig.SNMPVersion == "1" {
+	if snmpConfig.Protocol == config.ProtocolSNMP1 {
 		version = gosnmp.Version1
 	}
 
@@ -139,8 +139,8 @@ func (snmpService *SnmpService) Start(ctx context.Context, out chan<- model.Data
 				continue
 			}
 
-			downloadBytesPerSec := computeCounterDelta(previousDownloadOctets, currentDownloadOctets)
-			uploadBytesPerSec := computeCounterDelta(previousUploadOctets, currentUploadOctets)
+			downloadBytesPerSec := counter.ComputeDelta(previousDownloadOctets, currentDownloadOctets)
+			uploadBytesPerSec := counter.ComputeDelta(previousUploadOctets, currentUploadOctets)
 
 			previousDownloadOctets = currentDownloadOctets
 			previousUploadOctets = currentUploadOctets
@@ -165,25 +165,6 @@ func (snmpService *SnmpService) Start(ctx context.Context, out chan<- model.Data
 			}
 		}
 	}
-}
-
-// computeCounterDelta returns the increase in a 64-bit counter, handling
-// wrap-around by assuming a forward-only counter.
-func computeCounterDelta(previousValue, currentValue uint64) float64 {
-	if currentValue >= previousValue {
-		return float64(currentValue - previousValue)
-	}
-	// Counter wrapped. Choose the modulus based on value magnitude: if both
-	// values fit in 32 bits it's a Counter32/Integer32 wrap (modulus 2^32),
-	// otherwise Counter64 (modulus 2^64).
-	if previousValue <= math.MaxUint32 && currentValue <= math.MaxUint32 {
-		slog.Warn("32-bit SNMP counter wrap-around detected",
-			"previous", previousValue, "current", currentValue)
-		return float64(math.MaxUint32-previousValue) + float64(currentValue) + 1
-	}
-	slog.Warn("64-bit SNMP counter wrap-around detected",
-		"previous", previousValue, "current", currentValue)
-	return float64(math.MaxUint64-previousValue) + float64(currentValue) + 1
 }
 
 // extractUint64 pulls a Counter64 or Counter32 value from an SNMP variable.

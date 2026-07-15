@@ -30,6 +30,12 @@ type AppState struct {
 	// ContextMenuHostIndex is the host row the context menu was opened over.
 	ContextMenuHostIndex int
 
+	// HoverPos is the mouse position in window coordinates, fed each frame
+	// from the platform layer (Gio never sees moves over drag regions).
+	// HoverValid is false when the mouse is outside the window.
+	HoverPos   image.Point
+	HoverValid bool
+
 	ExitRequested     bool
 	SettingsRequested bool
 	// SettingsHostIndex is the host whose settings dialog should open.
