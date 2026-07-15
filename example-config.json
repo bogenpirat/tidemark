@@ -35,6 +35,7 @@
 			"keyFile": "C:\\Users\\me\\.ssh\\id_ed25519",
 			"interface": "eth0",
 			"hostKey": "",
+			"lanSubnet": "192.168.1.0/24",
 			"timeoutMs": 3000,
 			"retries": 1
 		}

@@ -27,6 +27,7 @@ upload/download throughput on a smooth, scrolling graph — one compact window p
 - **Tiny & frameless** — a borderless window that remembers its size and position.
 - **Dark & light themes** — toggle from the right-click context menu.
 - **At-a-glance stats** — current, max and average rate per host.
+- **Top talkers** — hover the graph to see which LAN hosts downloaded and uploaded the most in any second (SSH-polled routers).
 - **Self-contained** — a single `tidemark.exe`, no installer, no runtime, no dependencies.
 
 ## 🚀 Quick start
@@ -148,6 +149,7 @@ The config file is a top-level object with optional window/theme settings plus a
 | `keyFile`     | string | ✅ (SSH)   | —                                | SSH only. Path to the private key file used to authenticate. |
 | `interface`   | string | ✅ (SSH)   | —                                | SSH only. Network interface to monitor on the remote host (e.g. `pppoe-wan`, `eth0`). |
 | `hostKey`     | string |            | (accept any)                     | SSH only. Expected SHA256 fingerprint of the server's host key. When unset, any key is accepted and the fingerprint is logged so you can pin it here. |
+| `lanSubnet`   | string |            | (disabled)                       | SSH only. CIDR of the LAN behind the polled router (e.g. `192.168.1.0/24`). Enables per-second top-talker tracking (see below). |
 | `timeoutMs`   | number |            | `3000`                           | Per-poll timeout in milliseconds.                       |
 | `retries`     | number |            | `1`                              | Retry count per poll.                                   |
 
@@ -181,6 +183,48 @@ opening a window:
 .\tidemark.exe -hostkey my-router.json
 # Main Router (192.168.1.1:22): SHA256:NcW9jUnKvRk3…
 ```
+
+### Top talkers: which LAN host is using the bandwidth? (SSH only)
+
+When you monitor a **router** over SSH (e.g. OpenWrt), Tidemark can additionally
+record, for every second, the LAN-internal IPs that caused the most traffic —
+tracked separately for download and upload. Enable it by setting `lanSubnet`
+to your LAN's CIDR:
+
+```json
+{
+  "host": "192.168.1.1",
+  "protocol": "ssh",
+  "keyFile": "C:\\Users\\me\\.ssh\\id_ed25519",
+  "interface": "pppoe-wan",
+  "lanSubnet": "192.168.1.0/24"
+}
+```
+
+**Hover over the graph** to see it: a tooltip shows, for the second under the
+cursor, the LAN IP that downloaded the most (▼) and the one that uploaded the
+most (▲), each with its byte rate — for any second still in the graph's
+history, not just the current one.
+
+**How it works.** Each per-second poll also runs a tiny `awk` aggregation over
+the router's connection-tracking table (`/proc/net/nf_conntrack`), which holds
+cumulative per-direction byte counters per connection. Each connection's
+send and receive bytes are attributed to its originating (pre-NAT) LAN IP,
+and Tidemark diffs these totals second-over-second — the same cheap
+counter-delta approach used for the bandwidth graph itself. The load on the
+router is negligible.
+
+**Requirements & accuracy:**
+
+- Connection byte accounting must be enabled on the router
+  (`net.netfilter.nf_conntrack_acct=1`). This is the **default on OpenWrt**.
+  If it's off, or `/proc/net/nf_conntrack` doesn't exist, bandwidth monitoring
+  continues to work — you just get no top-talker info.
+- With hardware/software **flow offloading** enabled, conntrack byte counters
+  update lazily, so per-second attribution becomes coarser.
+- Connections that expire mid-second lose their final bytes; the attribution
+  is a close approximation, not an exact accounting.
+- The hover tooltip is currently available on **Windows** builds.
 
 ## 🛠️ Building from source
 

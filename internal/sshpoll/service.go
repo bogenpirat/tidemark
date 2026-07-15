@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -44,9 +45,24 @@ func (sshService *SshService) Start(ctx context.Context, out chan<- model.DataPo
 	}
 
 	address := net.JoinHostPort(sshConfig.Host, strconv.Itoa(int(sshConfig.Port)))
-	pollCommand := fmt.Sprintf(
-		"cat /sys/class/net/%s/statistics/rx_bytes /sys/class/net/%s/statistics/tx_bytes",
-		sshConfig.Interface, sshConfig.Interface)
+
+	// The optional top-talker feature is enabled by a valid lanSubnet CIDR.
+	// LoadConfig already validated the syntax; a parse failure here just
+	// disables the feature.
+	var lanPrefix netip.Prefix
+	talkerEnabled := false
+	if sshConfig.LanSubnet != "" {
+		parsedPrefix, prefixError := netip.ParsePrefix(sshConfig.LanSubnet)
+		if prefixError != nil {
+			slog.Warn("SSH lanSubnet invalid, top-talker disabled",
+				"host", sshConfig.Host, "lanSubnet", sshConfig.LanSubnet, "err", prefixError)
+		} else {
+			lanPrefix = parsedPrefix
+			talkerEnabled = true
+		}
+	}
+
+	pollCommand := buildPollCommand(sshConfig.Interface, talkerEnabled)
 	pollTimeout := time.Duration(sshConfig.TimeoutMs) * time.Millisecond
 
 	sshClient, dialError := ssh.Dial("tcp", address, clientConfig)
@@ -65,6 +81,7 @@ func (sshService *SshService) Start(ctx context.Context, out chan<- model.DataPo
 
 	var previousDownloadBytes uint64
 	var previousUploadBytes uint64
+	var previousTalkerTotals map[string]talkerTotals
 	baselineCaptured := false
 	firstSuccessLogged := false
 
@@ -120,7 +137,9 @@ func (sshService *SshService) Start(ctx context.Context, out chan<- model.DataPo
 				continue
 			}
 
-			currentDownloadBytes, currentUploadBytes, parseError := parseCounters(commandOutput)
+			counterSection, talkerSection := splitTalkerSection(commandOutput)
+
+			currentDownloadBytes, currentUploadBytes, parseError := parseCounters(counterSection)
 			if parseError != nil {
 				slog.Warn("SSH counter parse error", "host", sshConfig.Host, "err", parseError)
 				out <- model.DataPoint{
@@ -136,9 +155,15 @@ func (sshService *SshService) Start(ctx context.Context, out chan<- model.DataPo
 				"downloadBytes", currentDownloadBytes,
 				"uploadBytes", currentUploadBytes)
 
+			var currentTalkerTotals map[string]talkerTotals
+			if talkerEnabled {
+				currentTalkerTotals = parseTalkerTotals(talkerSection, lanPrefix)
+			}
+
 			if !baselineCaptured {
 				previousDownloadBytes = currentDownloadBytes
 				previousUploadBytes = currentUploadBytes
+				previousTalkerTotals = currentTalkerTotals
 				baselineCaptured = true
 				slog.Info("SSH baseline captured", "host", sshConfig.Host,
 					"downloadBytes", currentDownloadBytes, "uploadBytes", currentUploadBytes)
@@ -147,6 +172,12 @@ func (sshService *SshService) Start(ctx context.Context, out chan<- model.DataPo
 
 			downloadBytesPerSec := counter.ComputeDelta(previousDownloadBytes, currentDownloadBytes)
 			uploadBytesPerSec := counter.ComputeDelta(previousUploadBytes, currentUploadBytes)
+
+			var talkerWinners topTalkers
+			if talkerEnabled {
+				talkerWinners = pickTopTalkers(previousTalkerTotals, currentTalkerTotals)
+				previousTalkerTotals = currentTalkerTotals
+			}
 
 			previousDownloadBytes = currentDownloadBytes
 			previousUploadBytes = currentUploadBytes
@@ -164,10 +195,14 @@ func (sshService *SshService) Start(ctx context.Context, out chan<- model.DataPo
 			}
 
 			out <- model.DataPoint{
-				TimestampMs:         tickTime.UnixMilli(),
-				DownloadBytesPerSec: downloadBytesPerSec,
-				UploadBytesPerSec:   uploadBytesPerSec,
-				IsError:             false,
+				TimestampMs:                  tickTime.UnixMilli(),
+				DownloadBytesPerSec:          downloadBytesPerSec,
+				UploadBytesPerSec:            uploadBytesPerSec,
+				IsError:                      false,
+				TopDownloadIP:          talkerWinners.downloadIP,
+				TopDownloadBytesPerSec: talkerWinners.downloadBytesPerSec,
+				TopUploadIP:            talkerWinners.uploadIP,
+				TopUploadBytesPerSec:   talkerWinners.uploadBytesPerSec,
 			}
 		}
 	}
@@ -296,6 +331,135 @@ func runCommand(ctx context.Context, sshClient *ssh.Client, command string,
 
 // errPollTimeout marks a poll that exceeded the configured timeout.
 var errPollTimeout = fmt.Errorf("poll timed out")
+
+// talkerSeparator is the marker line the poll command emits between the
+// interface counters and the per-IP conntrack totals.
+const talkerSeparator = "==="
+
+// talkerAwkProgram aggregates /proc/net/nf_conntrack on the remote host into
+// one "ip uploadbytes downloadbytes" line per originating source IP. The
+// first src= of an entry is the original-direction source (the pre-NAT LAN IP
+// for outbound connections). The entry's first bytes= counter is the
+// original direction (LAN host sending = upload), the second is the reply
+// direction (LAN host receiving = download). Requires nf_conntrack_acct=1
+// (OpenWrt default); without it no bytes= fields exist and the output is
+// empty.
+const talkerAwkProgram = `{ip="";u=0;d=0;n=0; for(i=1;i<=NF;i++){ if(ip=="" && index($i,"src=")==1) ip=substr($i,5); else if(index($i,"bytes=")==1){n++; if(n==1)u=substr($i,7)+0; else if(n==2)d=substr($i,7)+0} } if(ip!="" && n>0){up[ip]+=u; dn[ip]+=d}} END{for(k in up) print k, up[k], dn[k]}`
+
+// buildPollCommand returns the remote command run once per second. The base
+// command reads the interface byte counters; with the top-talker feature it
+// additionally dumps per-IP conntrack byte totals after a separator line. The
+// awk part is best-effort: if conntrack is unavailable the section is empty
+// and only the talker info is lost, never the bandwidth sample.
+func buildPollCommand(interfaceName string, talkerEnabled bool) string {
+	counterCommand := fmt.Sprintf(
+		"cat /sys/class/net/%s/statistics/rx_bytes /sys/class/net/%s/statistics/tx_bytes",
+		interfaceName, interfaceName)
+	if !talkerEnabled {
+		return counterCommand
+	}
+	return fmt.Sprintf("%s && echo %s && { awk '%s' /proc/net/nf_conntrack 2>/dev/null || true; }",
+		counterCommand, talkerSeparator, talkerAwkProgram)
+}
+
+// splitTalkerSection splits the poll output at the separator line into the
+// counter part and the talker part. Without a separator (feature disabled, or
+// the remote command was cut short) the whole output is the counter part.
+func splitTalkerSection(commandOutput []byte) (counterSection []byte, talkerSection string) {
+	outputText := string(commandOutput)
+	separatorIndex := strings.Index(outputText, "\n"+talkerSeparator)
+	if separatorIndex < 0 {
+		return commandOutput, ""
+	}
+	counterPart := outputText[:separatorIndex]
+	talkerPart := outputText[separatorIndex+len("\n"+talkerSeparator):]
+	return []byte(counterPart), talkerPart
+}
+
+// talkerTotals holds one LAN IP's cumulative conntrack byte counters, split
+// by direction from the LAN host's point of view.
+type talkerTotals struct {
+	uploadBytes   uint64 // original direction: bytes sent by the LAN host
+	downloadBytes uint64 // reply direction: bytes received by the LAN host
+}
+
+// topTalkers identifies the per-direction winners of one second: the LAN IP
+// that downloaded the most and the LAN IP that uploaded the most (they are
+// often, but not necessarily, the same host).
+type topTalkers struct {
+	downloadIP          string
+	downloadBytesPerSec float64
+	uploadIP            string
+	uploadBytesPerSec   float64
+}
+
+// parseTalkerTotals parses "ip uploadbytes downloadbytes" lines into a map,
+// keeping only IPs inside lanPrefix. Malformed lines are skipped; a poll must
+// never fail because of talker data.
+func parseTalkerTotals(talkerSection string, lanPrefix netip.Prefix) map[string]talkerTotals {
+	totals := make(map[string]talkerTotals)
+	for _, line := range strings.Split(talkerSection, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 {
+			continue
+		}
+		address, addressError := netip.ParseAddr(fields[0])
+		if addressError != nil || !lanPrefix.Contains(address) {
+			continue
+		}
+		uploadBytes, uploadError := strconv.ParseUint(fields[1], 10, 64)
+		if uploadError != nil {
+			continue
+		}
+		downloadBytes, downloadError := strconv.ParseUint(fields[2], 10, 64)
+		if downloadError != nil {
+			continue
+		}
+		entry := totals[fields[0]]
+		entry.uploadBytes += uploadBytes
+		entry.downloadBytes += downloadBytes
+		totals[fields[0]] = entry
+	}
+	return totals
+}
+
+// talkerDelta returns the per-second byte delta for one cumulative counter.
+// An IP absent from the previous map contributes its full current total (all
+// of its flows started since the last poll). A shrinking total (flows
+// expired) is clamped to zero.
+func talkerDelta(previousBytes, currentBytes uint64, wasPresent bool) uint64 {
+	switch {
+	case !wasPresent:
+		return currentBytes
+	case currentBytes > previousBytes:
+		return currentBytes - previousBytes
+	}
+	return 0
+}
+
+// pickTopTalkers returns, for each direction, the IP with the largest
+// positive byte delta between the previous and current per-IP conntrack
+// totals. A direction with no traffic gets an empty IP.
+func pickTopTalkers(previousTotals, currentTotals map[string]talkerTotals) topTalkers {
+	var winners topTalkers
+	var topDownloadDelta, topUploadDelta uint64
+	for ip, current := range currentTotals {
+		previous, wasPresent := previousTotals[ip]
+		downloadDelta := talkerDelta(previous.downloadBytes, current.downloadBytes, wasPresent)
+		uploadDelta := talkerDelta(previous.uploadBytes, current.uploadBytes, wasPresent)
+		if downloadDelta > topDownloadDelta {
+			topDownloadDelta = downloadDelta
+			winners.downloadIP = ip
+		}
+		if uploadDelta > topUploadDelta {
+			topUploadDelta = uploadDelta
+			winners.uploadIP = ip
+		}
+	}
+	winners.downloadBytesPerSec = float64(topDownloadDelta)
+	winners.uploadBytesPerSec = float64(topUploadDelta)
+	return winners
+}
 
 // parseCounters extracts the two decimal counter lines (rx then tx) produced
 // by the poll command.

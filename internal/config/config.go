@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 )
 
@@ -38,6 +39,11 @@ type HostConfig struct {
 	// When empty, any host key is accepted (the fingerprint is logged so it
 	// can be pinned here).
 	HostKey string `json:"hostKey,omitempty"`
+	// LanSubnet is the CIDR of the LAN behind the polled router, e.g.
+	// "192.168.1.0/24". When set, each poll also determines the LAN IP that
+	// caused the most traffic that second (via conntrack byte counters on the
+	// remote host). Empty disables the feature.
+	LanSubnet string `json:"lanSubnet,omitempty"`
 
 	TimeoutMs int `json:"timeoutMs"`
 	Retries   int `json:"retries"`
@@ -148,6 +154,11 @@ func applyHostDefaults(host *HostConfig) error {
 		}
 		if host.Username == "" {
 			host.Username = "root"
+		}
+		if host.LanSubnet != "" {
+			if _, parseError := netip.ParsePrefix(host.LanSubnet); parseError != nil {
+				return fmt.Errorf("config field \"lanSubnet\" must be a CIDR like \"192.168.1.0/24\": %w", parseError)
+			}
 		}
 	default:
 		return fmt.Errorf("config field \"protocol\" must be %q, %q, or %q (got %q)",

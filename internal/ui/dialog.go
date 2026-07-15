@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -65,6 +66,7 @@ type settingsDialog struct {
 	keyFile   widget.Editor
 	iface     widget.Editor
 	hostKey   widget.Editor
+	lanSubnet widget.Editor
 	timeoutMs widget.Editor
 	retries   widget.Editor
 
@@ -81,7 +83,7 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.HostConfig) 
 	for _, ed := range []*widget.Editor{
 		&d.name, &d.hosts, &d.protocol, &d.port, &d.community,
 		&d.dlOID, &d.ulOID, &d.username, &d.keyFile, &d.iface, &d.hostKey,
-		&d.timeoutMs, &d.retries,
+		&d.lanSubnet, &d.timeoutMs, &d.retries,
 	} {
 		ed.SingleLine = true
 	}
@@ -96,6 +98,7 @@ func newSettingsDialog(mat *material.Theme, isDark bool, cfg config.HostConfig) 
 	d.keyFile.SetText(cfg.KeyFile)
 	d.iface.SetText(cfg.Interface)
 	d.hostKey.SetText(cfg.HostKey)
+	d.lanSubnet.SetText(cfg.LanSubnet)
 	d.timeoutMs.SetText(fmt.Sprintf("%d", cfg.TimeoutMs))
 	d.retries.SetText(fmt.Sprintf("%d", cfg.Retries))
 	return d
@@ -135,6 +138,7 @@ func (d *settingsDialog) validate() (config.HostConfig, []string) {
 	cfg.KeyFile = strings.TrimSpace(d.keyFile.Text())
 	cfg.Interface = strings.TrimSpace(d.iface.Text())
 	cfg.HostKey = strings.TrimSpace(d.hostKey.Text())
+	cfg.LanSubnet = strings.TrimSpace(d.lanSubnet.Text())
 
 	if cfg.Protocol == config.ProtocolSNMP1 || cfg.Protocol == config.ProtocolSNMP2c {
 		if cfg.Community == "" {
@@ -154,6 +158,11 @@ func (d *settingsDialog) validate() (config.HostConfig, []string) {
 		}
 		if cfg.Interface == "" {
 			errs = append(errs, "Interface: required")
+		}
+		if cfg.LanSubnet != "" {
+			if _, err := netip.ParsePrefix(cfg.LanSubnet); err != nil {
+				errs = append(errs, "LAN Subnet: must be a CIDR like 192.168.1.0/24 (or empty)")
+			}
 		}
 	}
 
@@ -229,6 +238,8 @@ func (d *settingsDialog) Layout(gtx layout.Context) dialogAction {
 		layout.Rigid(d.fieldRow("Interface", &d.iface, "ssh only, e.g., pppoe-wan")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Host Key", &d.hostKey, "ssh only, optional SHA256 fingerprint")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
+		layout.Rigid(d.fieldRow("LAN Subnet", &d.lanSubnet, "ssh only, optional, e.g., 192.168.1.0/24")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
 		layout.Rigid(d.fieldRow("Timeout (ms)", &d.timeoutMs, "e.g., 3000")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(dlgRowGapDp)}.Layout),
@@ -371,7 +382,7 @@ func RunSettingsDialog(mat *material.Theme, cfg config.HostConfig, isDark bool) 
 	win := new(app.Window)
 	win.Option(
 		app.Title("Settings"),
-		app.Size(unit.Dp(520), unit.Dp(640)),
+		app.Size(unit.Dp(520), unit.Dp(680)),
 	)
 
 	d := newSettingsDialog(mat, isDark, cfg)

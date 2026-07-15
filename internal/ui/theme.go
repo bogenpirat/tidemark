@@ -19,6 +19,10 @@ type Theme struct {
 	ButtonFace      color.NRGBA
 	DownloadLabel   color.NRGBA
 	UploadLabel     color.NRGBA
+	// Tooltip colors for the graph hover box (top-talker info).
+	TooltipBackground color.NRGBA
+	TooltipText       color.NRGBA
+	HoverMarker       color.NRGBA
 }
 
 // DarkTheme is the default dark color scheme.
@@ -38,6 +42,10 @@ var DarkTheme = Theme{
 	ButtonFace:      color.NRGBA{R: 55, G: 55, B: 55, A: 255},
 	DownloadLabel:   color.NRGBA{R: 255, G: 100, B: 100, A: 255},
 	UploadLabel:     color.NRGBA{R: 100, G: 230, B: 100, A: 255},
+
+	TooltipBackground: color.NRGBA{R: 45, G: 45, B: 45, A: 235},
+	TooltipText:       color.NRGBA{R: 230, G: 230, B: 230, A: 255},
+	HoverMarker:       color.NRGBA{R: 160, G: 160, B: 160, A: 150},
 }
 
 // LightTheme is the bright color scheme.
@@ -57,4 +65,8 @@ var LightTheme = Theme{
 	ButtonFace:      color.NRGBA{R: 210, G: 210, B: 210, A: 255},
 	DownloadLabel:   color.NRGBA{R: 180, G: 30, B: 30, A: 255},
 	UploadLabel:     color.NRGBA{R: 20, G: 140, B: 20, A: 255},
+
+	TooltipBackground: color.NRGBA{R: 250, G: 250, B: 250, A: 240},
+	TooltipText:       color.NRGBA{R: 30, G: 30, B: 30, A: 255},
+	HoverMarker:       color.NRGBA{R: 120, G: 120, B: 120, A: 150},
 }

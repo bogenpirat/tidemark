@@ -256,6 +256,8 @@ func main() {
 				appState.ContextMenuPos = pos
 			}
 
+			appState.HoverPos, appState.HoverValid = HoverPosition()
+
 			gtx := app.NewContext(&ops, typedEvent)
 			rootLayout.Layout(gtx)
 			typedEvent.Frame(&ops)

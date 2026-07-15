@@ -45,8 +45,9 @@ type Graph struct {
 }
 
 // Layout draws the full graph widget for one host into the available
-// constraints.
-func (graph *Graph) Layout(gtx layout.Context, host *HostState) layout.Dimensions {
+// constraints. hoverPos is the mouse position relative to this widget's
+// origin; hoverValid is false when the mouse is outside this host's graph.
+func (graph *Graph) Layout(gtx layout.Context, host *HostState, hoverPos image.Point, hoverValid bool) layout.Dimensions {
 	currentTheme := graph.AppState.CurrentTheme
 	matTheme := graph.MatTheme
 	snapshot := host.DataBuffer.Snapshot()
@@ -111,7 +112,129 @@ func (graph *Graph) Layout(gtx layout.Context, host *HostState) layout.Dimension
 	drawVLine(gtx.Ops, currentTheme.BorderColor, plotLeft, plotTop, plotBottom)
 	drawVLine(gtx.Ops, currentTheme.BorderColor, plotRight, plotTop, plotBottom)
 
+	// Hover tooltip: when the mouse is over a data-point column whose point
+	// carries top-talker info, show the LAN IP and its rate for that second.
+	if hoverValid && len(snapshot) > 0 &&
+		hoverPos.X >= plotLeft && hoverPos.X < plotRight &&
+		hoverPos.Y >= plotTop && hoverPos.Y < plotBottom {
+		drawHoverTooltip(gtx, matTheme, currentTheme, snapshot, hoverPos,
+			plotLeft, plotTop, plotRight, plotBottom, plotWidth)
+	}
+
 	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+// hoverMatchToleranceMs is the maximum distance between the hovered column's
+// timestamp and a data point for the point to count as hovered. Columns are
+// 1 second apart, so anything beyond ~3/4 s is a gap, not a neighbor.
+const hoverMatchToleranceMs = 750
+
+// findHoveredDataPoint inverts the x→age mapping used by buildPixelPoints
+// (1 px = 1 s) and returns the snapshot point nearest to the hovered column,
+// or nil when no point lies within the match tolerance.
+func findHoveredDataPoint(
+	snapshot []model.DataPoint,
+	hoverX, plotLeft, plotWidth int,
+) *model.DataPoint {
+	nowMs := time.Now().UnixMilli()
+	historyMs := int64(plotWidth) * 1000
+	xFraction := float64(hoverX-plotLeft) / float64(plotWidth)
+	targetMs := nowMs - int64((1.0-xFraction)*float64(historyMs))
+
+	var nearestPoint *model.DataPoint
+	var nearestDistanceMs int64
+	for pointIndex := range snapshot {
+		distanceMs := snapshot[pointIndex].TimestampMs - targetMs
+		if distanceMs < 0 {
+			distanceMs = -distanceMs
+		}
+		if nearestPoint == nil || distanceMs < nearestDistanceMs {
+			nearestPoint = &snapshot[pointIndex]
+			nearestDistanceMs = distanceMs
+		}
+	}
+	if nearestPoint == nil || nearestDistanceMs > hoverMatchToleranceMs {
+		return nil
+	}
+	return nearestPoint
+}
+
+// tooltipRow is one colored text line inside the hover tooltip box.
+type tooltipRow struct {
+	textColor color.NRGBA
+	content   string
+}
+
+// drawHoverTooltip renders the vertical hover marker and the top-talker
+// tooltip box for the data point under the cursor: one row for the LAN IP
+// that downloaded the most that second, one for the IP that uploaded the
+// most. Points without top-talker info (SNMP hosts, error points, feature
+// disabled, idle LAN) show nothing.
+func drawHoverTooltip(
+	gtx layout.Context,
+	matTheme *material.Theme,
+	currentTheme *Theme,
+	snapshot []model.DataPoint,
+	hoverPos image.Point,
+	plotLeft, plotTop, plotRight, plotBottom, plotWidth int,
+) {
+	hoveredPoint := findHoveredDataPoint(snapshot, hoverPos.X, plotLeft, plotWidth)
+	if hoveredPoint == nil || (hoveredPoint.TopDownloadIP == "" && hoveredPoint.TopUploadIP == "") {
+		return
+	}
+
+	drawVLine(gtx.Ops, currentTheme.HoverMarker, hoverPos.X, plotTop, plotBottom)
+
+	var rows []tooltipRow
+	if hoveredPoint.TopDownloadIP != "" {
+		rows = append(rows, tooltipRow{
+			textColor: currentTheme.DownloadLabel,
+			content: "▼ " + hoveredPoint.TopDownloadIP + "  " +
+				units.FormatBytesPerSec(hoveredPoint.TopDownloadBytesPerSec),
+		})
+	}
+	if hoveredPoint.TopUploadIP != "" {
+		rows = append(rows, tooltipRow{
+			textColor: currentTheme.UploadLabel,
+			content: "▲ " + hoveredPoint.TopUploadIP + "  " +
+				units.FormatBytesPerSec(hoveredPoint.TopUploadBytesPerSec),
+		})
+	}
+
+	padding := gtx.Dp(6)
+	lineHeight := gtx.Dp(16)
+	textChars := 0
+	for _, row := range rows {
+		if len(row.content) > textChars {
+			textChars = len(row.content)
+		}
+	}
+	// Rough glyph width at 11sp; the label is clipped to the box either way.
+	boxWidth := gtx.Dp(unit.Dp(float32(textChars)*6.5)) + padding*2
+	boxHeight := lineHeight*len(rows) + padding*2
+
+	cursorOffset := gtx.Dp(14)
+	boxLeft := hoverPos.X + cursorOffset
+	if boxLeft+boxWidth > plotRight {
+		boxLeft = hoverPos.X - cursorOffset - boxWidth
+	}
+	boxTop := hoverPos.Y + cursorOffset
+	if boxTop+boxHeight > plotBottom {
+		boxTop = hoverPos.Y - cursorOffset - boxHeight
+	}
+
+	boxRect := image.Rect(boxLeft, boxTop, boxLeft+boxWidth, boxTop+boxHeight)
+	fillRect(gtx.Ops, currentTheme.TooltipBackground, boxRect)
+	drawHLine(gtx.Ops, currentTheme.BorderColor, boxRect.Min.X, boxRect.Min.Y, boxRect.Max.X)
+	drawHLine(gtx.Ops, currentTheme.BorderColor, boxRect.Min.X, boxRect.Max.Y-1, boxRect.Max.X)
+	drawVLine(gtx.Ops, currentTheme.BorderColor, boxRect.Min.X, boxRect.Min.Y, boxRect.Max.Y)
+	drawVLine(gtx.Ops, currentTheme.BorderColor, boxRect.Max.X-1, boxRect.Min.Y, boxRect.Max.Y)
+
+	for rowIndex, row := range rows {
+		drawPositionedLabel(gtx, matTheme, row.textColor, row.content,
+			image.Pt(boxLeft+padding, boxTop+padding+rowIndex*lineHeight),
+			boxWidth-padding*2, lineHeight, text.Start)
+	}
 }
 
 // computeMaximumBytesPerSec returns the highest single download or upload rate
