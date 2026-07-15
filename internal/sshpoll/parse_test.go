@@ -146,6 +146,41 @@ func TestPickTopTalkers(t *testing.T) {
 	}
 }
 
+func TestParseLeaseNames(t *testing.T) {
+	leaseOutput := "1752600000 aa:bb:cc:dd:ee:01 192.168.1.10 laptop-anna 01:aa:bb:cc:dd:ee:01\n" +
+		"1752600000 aa:bb:cc:dd:ee:02 192.168.1.20 * 01:aa:bb:cc:dd:ee:02\n" + // no hostname sent
+		"1752600000 aa:bb:cc:dd:ee:03 not-an-ip badhost 01:aa:bb:cc:dd:ee:03\n" + // malformed ip
+		"garbage line\n" + // too few fields
+		"1752600000 aa:bb:cc:dd:ee:04 2003:e5:1234::4 nas *\n" + // IPv6 lease (odhcpd-style entry)
+		"\n"
+	leaseNames := parseLeaseNames(leaseOutput)
+	if len(leaseNames) != 2 {
+		t.Fatalf("expected 2 lease names, got %v", leaseNames)
+	}
+	if leaseNames["192.168.1.10"] != "laptop-anna" {
+		t.Errorf("lease for .10 = %q, want laptop-anna", leaseNames["192.168.1.10"])
+	}
+	if leaseNames["2003:e5:1234::4"] != "nas" {
+		t.Errorf("lease for IPv6 host = %q, want nas", leaseNames["2003:e5:1234::4"])
+	}
+}
+
+func TestTalkerLabel(t *testing.T) {
+	leaseNames := map[string]string{"192.168.1.10": "laptop-anna"}
+	if got := talkerLabel(leaseNames, "192.168.1.10"); got != "laptop-anna" {
+		t.Errorf("known ip label = %q, want laptop-anna", got)
+	}
+	if got := talkerLabel(leaseNames, "192.168.1.99"); got != "192.168.1.99" {
+		t.Errorf("unknown ip label = %q, want the ip back", got)
+	}
+	if got := talkerLabel(leaseNames, ""); got != "" {
+		t.Errorf("empty ip label = %q, want empty", got)
+	}
+	if got := talkerLabel(nil, "192.168.1.10"); got != "192.168.1.10" {
+		t.Errorf("nil map label = %q, want the ip back", got)
+	}
+}
+
 // TestParseCountersWithTalkerOutput ensures the existing counter parser still
 // works on the first section of the combined command output.
 func TestParseCountersWithTalkerOutput(t *testing.T) {

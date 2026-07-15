@@ -79,6 +79,13 @@ func (sshService *SshService) Start(ctx context.Context, out chan<- model.DataPo
 		"user", sshConfig.Username,
 		"interface", sshConfig.Interface)
 
+	// Fetched once per (re)connect: devices renew their leases far less often
+	// than we poll, so a per-connection snapshot is fresh enough.
+	var leaseNames map[string]string
+	if talkerEnabled {
+		leaseNames = fetchLeaseNames(ctx, sshClient, pollTimeout, sshConfig.Host)
+	}
+
 	var previousDownloadBytes uint64
 	var previousUploadBytes uint64
 	var previousTalkerTotals map[string]talkerTotals
@@ -114,6 +121,9 @@ func (sshService *SshService) Start(ctx context.Context, out chan<- model.DataPo
 				}
 				sshClient = reconnectedClient
 				slog.Info("SSH session re-established", "host", sshConfig.Host)
+				if talkerEnabled {
+					leaseNames = fetchLeaseNames(ctx, sshClient, pollTimeout, sshConfig.Host)
+				}
 			}
 
 			commandOutput, pollError := runCommandWithRetries(ctx, sshClient, pollCommand,
@@ -199,9 +209,9 @@ func (sshService *SshService) Start(ctx context.Context, out chan<- model.DataPo
 				DownloadBytesPerSec:          downloadBytesPerSec,
 				UploadBytesPerSec:            uploadBytesPerSec,
 				IsError:                      false,
-				TopDownloadIP:          talkerWinners.downloadIP,
+				TopDownloadIP:          talkerLabel(leaseNames, talkerWinners.downloadIP),
 				TopDownloadBytesPerSec: talkerWinners.downloadBytesPerSec,
-				TopUploadIP:            talkerWinners.uploadIP,
+				TopUploadIP:            talkerLabel(leaseNames, talkerWinners.uploadIP),
 				TopUploadBytesPerSec:   talkerWinners.uploadBytesPerSec,
 			}
 		}
@@ -374,6 +384,54 @@ func splitTalkerSection(commandOutput []byte) (counterSection []byte, talkerSect
 	counterPart := outputText[:separatorIndex]
 	talkerPart := outputText[separatorIndex+len("\n"+talkerSeparator):]
 	return []byte(counterPart), talkerPart
+}
+
+// leaseCommand dumps the dnsmasq DHCP lease table. /tmp/dhcp.leases is the
+// OpenWrt (and general dnsmasq) default location; on hosts without it the
+// command yields no output and talkers simply keep showing as bare IPs.
+const leaseCommand = "cat /tmp/dhcp.leases 2>/dev/null || true"
+
+// fetchLeaseNames reads the remote DHCP lease table and returns an
+// ip -> hostname map for labeling top talkers. Best-effort: any failure
+// returns an empty map and only the name labels are lost.
+func fetchLeaseNames(ctx context.Context, sshClient *ssh.Client,
+	timeout time.Duration, host string) map[string]string {
+	leaseOutput, leaseError := runCommand(ctx, sshClient, leaseCommand, timeout)
+	if leaseError != nil {
+		slog.Warn("DHCP lease fetch failed, talkers will show as IPs",
+			"host", host, "err", leaseError)
+		return nil
+	}
+	leaseNames := parseLeaseNames(string(leaseOutput))
+	slog.Info("DHCP lease names loaded", "host", host, "count", len(leaseNames))
+	return leaseNames
+}
+
+// parseLeaseNames parses dnsmasq lease lines ("expiry mac ip hostname
+// clientid") into an ip -> hostname map. Leases where the client sent no
+// hostname (recorded as "*") and malformed lines are skipped.
+func parseLeaseNames(leaseOutput string) map[string]string {
+	leaseNames := make(map[string]string)
+	for _, line := range strings.Split(leaseOutput, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[3] == "*" {
+			continue
+		}
+		if _, addressError := netip.ParseAddr(fields[2]); addressError != nil {
+			continue
+		}
+		leaseNames[fields[2]] = fields[3]
+	}
+	return leaseNames
+}
+
+// talkerLabel returns the DHCP hostname for ip when one is known, otherwise
+// the ip itself. An empty ip (no talker that second) stays empty.
+func talkerLabel(leaseNames map[string]string, ip string) string {
+	if name, isKnown := leaseNames[ip]; isKnown {
+		return name
+	}
+	return ip
 }
 
 // talkerTotals holds one LAN IP's cumulative conntrack byte counters, split

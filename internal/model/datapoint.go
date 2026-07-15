@@ -9,11 +9,13 @@ type DataPoint struct {
 	IsError             bool
 	ErrorMessage        string
 
-	// TopDownloadIP / TopUploadIP are the LAN-internal IPs that received
+	// TopDownloadIP / TopUploadIP label the LAN-internal hosts that received
 	// (download) and sent (upload) the most traffic during this second, when
-	// the host's lanSubnet feature is enabled. Often the same host, but not
-	// necessarily. Empty when the feature is disabled, the poll errored, or
-	// no LAN traffic was observed in that direction.
+	// the host's lanSubnet feature is enabled. The label is the device's DHCP
+	// hostname when the router's lease table knows one, otherwise its IP.
+	// Often the same host in both directions, but not necessarily. Empty when
+	// the feature is disabled, the poll errored, or no LAN traffic was
+	// observed in that direction.
 	TopDownloadIP string
 	// TopDownloadBytesPerSec is the byte rate received by TopDownloadIP
 	// during this second.
