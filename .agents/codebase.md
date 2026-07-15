@@ -5,9 +5,10 @@
 ### `main.go`
 
 Entry point. Owns the Gio event loop. Key responsibilities:
-- Parse `os.Args[1]` as config file path
+- Parse flags (`-hostkey`) and the config file path via the `flag` package
+- `-hostkey` mode: `printHostKeys` fetches each ssh host's key fingerprint via `sshpoll.FetchHostKey` and exits (no window). Calls `AttachParentConsole()` first so output is visible from a terminal despite the windowsgui subsystem
 - Load config, create ring buffer, create AppState
-- Launch SNMP goroutine and bridge goroutine
+- Launch one polling goroutine per host via `startHostService` (dispatches on `HostConfig.Protocol`: `ssh` → `sshpoll.NewService`, otherwise `snmpservice.NewService`) plus a bridge goroutine
 - Build font collection (gofont + Segoe UI Symbol for emoji fallback)
 - Create window: `app.Size(...)` from saved config or defaults, `app.Decorated(false)`
 - Event loop: `onPlatformEvent(window, event)`, then switch on `DestroyEvent` / `FrameEvent`
@@ -33,6 +34,8 @@ Called from `main.go`'s event loop on every event. On `app.Win32ViewEvent` with 
 
 **`TakeRightClick() (bool, image.Point)`** — called from the main goroutine before each `Layout` call. Returns and clears any pending right-click position.
 
+**`AttachParentConsole()`** — attaches the process to the parent's console (`AttachConsole(ATTACH_PARENT_PROCESS)`) and rebinds `os.Stdout`/`os.Stderr` to `CONOUT$`, but only when those handles are invalid — streams the shell already redirected to a pipe or file are left alone. Used by CLI modes (`-hostkey`) in the console-less windowsgui release build. Must run before `setupLogging` (the slog handler captures `os.Stdout` at creation).
+
 **`atomicWin atomic.Pointer[app.Window]`** — stored on the first `Win32ViewEvent` so `customWndProc` (running on the Win32 thread) can call `win.Invalidate()`.
 
 Constants: `gwlStyle` (-16), `gwlpWndProc` (-4), `wsMaximizeBox`, `wmNcRButtonDown` (0x00A4).
@@ -42,6 +45,7 @@ Constants: `gwlStyle` (-16), `gwlpWndProc` (-4), `wsMaximizeBox`, `wmNcRButtonDo
 No-op stubs:
 - `func onPlatformEvent(win *app.Window, e event.Event) {}`
 - `func TakeRightClick() (bool, image.Point) { return false, image.Point{} }`
+- `func AttachParentConsole() {}`
 
 ---
 
@@ -49,21 +53,31 @@ No-op stubs:
 
 ### `config.go`
 
-**`AppConfig` struct** — all fields map 1:1 to JSON keys:
+**`HostConfig` struct** (one per element of `AppConfig.Hosts`) — all fields map 1:1 to JSON keys. Which fields apply depends on `Protocol` (`snmp1`, `snmp2c`, or `ssh`; constants `config.ProtocolSNMP1/SNMP2c/SSH`, helper `IsSNMP()`):
 | Field | Type | JSON | Default |
 |-------|------|------|---------|
 | Host | string | `host` | required |
-| Community | string | `community` | required |
-| Port | uint16 | `port` | 161 |
-| DownloadOID | string | `downloadOID` | `1.3.6.1.2.1.31.1.1.1.6.1` |
-| UploadOID | string | `uploadOID` | `1.3.6.1.2.1.31.1.1.1.10.1` |
+| Protocol | string | `protocol` | `snmp2c` |
+| Port | uint16 | `port` | 161 (SNMP) / 22 (SSH) |
+| Community | string | `community` | required for SNMP |
+| DownloadOID | string | `downloadOID` | `1.3.6.1.2.1.31.1.1.1.6.1` (SNMP only) |
+| UploadOID | string | `uploadOID` | `1.3.6.1.2.1.31.1.1.1.10.1` (SNMP only) |
+| Username | string | `username` | `root` (SSH only) |
+| KeyFile | string | `keyFile` | required for SSH (private key path) |
+| Interface | string | `interface` | required for SSH (remote NIC name) |
+| HostKey | string | `hostKey` | empty = accept any (SSH only, SHA256 fingerprint) |
 | TimeoutMs | int | `timeoutMs` | 3000 |
 | Retries | int | `retries` | 1 |
-| HistorySeconds | int | `historySeconds` | 600 (max 3600) |
+
+**`AppConfig` struct** — window/theme fields:
+| Field | Type | JSON | Default |
+|-------|------|------|---------|
 | WindowWidthDp | float32 | `windowWidthDp,omitempty` | 0 (uses default) |
 | WindowHeightDp | float32 | `windowHeightDp,omitempty` | 0 (uses default) |
 | WindowX | *int | `windowX,omitempty` | nil (OS places window) |
 | WindowY | *int | `windowY,omitempty` | nil (OS places window) |
+| DarkTheme | *bool | `darkTheme,omitempty` | nil (dark) |
+| Hosts | []HostConfig | `hosts` | required |
 
 Window geometry is runtime-managed: size (dp) and top-left position (`WindowX`/`WindowY`, physical screen px) are written back on exit and restored on launch. Position uses Win32 `GetWindowRect`/`SetWindowPos` (`platform_windows.go`) since Gio has no window-position API; `*int` distinguishes "never saved" (nil) from a valid `0` coordinate.
 
@@ -105,23 +119,44 @@ Capacity is set to `AppConfig.HistorySeconds` (default 600 entries = 10 minutes 
 
 ---
 
+## `internal/counter`
+
+### `counter.go`
+
+`counter.ComputeDelta(prev, curr uint64) float64` — shared by both polling services. If `curr < prev`, assumes wrap and computes the delta modulo 2^32 (when both values fit in 32 bits) or 2^64. Logs a warning on wrap.
+
+---
+
 ## `internal/snmp`
 
 If `downloadOID`/`uploadOID` are missing from the config, `LoadConfig` defaults them to the interface-1 high-capacity (64-bit) counters: `1.3.6.1.2.1.31.1.1.1.6.1` (download) and `1.3.6.1.2.1.31.1.1.1.10.1` (upload). The config can override these to use `ifInOctets` / `ifOutOctets` (32-bit) OIDs, or any other interface, instead.
 
 ### `service.go`
 
-**`SnmpService`** wraps `*config.AppConfig`. `Start(ctx, out chan<- model.DataPoint)` runs in a goroutine:
-1. Opens a gosnmp v2c session, connects.
+**`SnmpService`** wraps `*config.HostConfig`. `Start(ctx, out chan<- model.DataPoint)` runs in a goroutine:
+1. Opens a gosnmp session (v1 when `Protocol == "snmp1"`, else v2c), connects.
 2. Runs a `time.NewTicker(time.Second)` loop.
 3. First successful tick: saves baseline counters, emits nothing.
-4. Subsequent ticks: computes `computeCounterDelta` (handles 64-bit wrap), sends `DataPoint`.
+4. Subsequent ticks: computes `counter.ComputeDelta` (handles wrap), sends `DataPoint`.
 5. On poll error: sends `DataPoint{IsError: true}` (unless no baseline yet).
 6. Context cancel: clean stop.
 
-`computeCounterDelta(prev, curr uint64) float64` — if `curr < prev`, assumes wrap and computes `(MaxUint64 - prev) + curr + 1`. Logs a warning on wrap.
-
 `extractUint64(pdu)` — accepts `Counter64` (→ uint64), `Counter32`, `Gauge32` (→ uint cast to uint64). Returns error on unexpected type.
+
+---
+
+## `internal/sshpoll`
+
+### `service.go`
+
+**`SshService`** wraps `*config.HostConfig`. Polls any Linux host over SSH; mirrors the SNMP service's shape and error semantics. `Start(ctx, out chan<- model.DataPoint)`:
+1. Loads/parses the private key from `KeyFile`, builds an `ssh.ClientConfig` (`golang.org/x/crypto/ssh`). Host key policy: if `HostKey` is set, the server's SHA256 fingerprint must match (compared with or without the `SHA256:` prefix); if empty, any key is accepted and the fingerprint is logged so the user can pin it.
+2. Dials `host:port` once and keeps the client alive. Key-load or initial-dial failure: log error + return (same as SNMP connect failure).
+3. 1-second ticker loop. Each tick runs `cat /sys/class/net/<iface>/statistics/rx_bytes .../tx_bytes` in a fresh session (a lightweight channel on the live connection, no re-handshake), enforcing `TimeoutMs` as a deadline and honoring `Retries` extra attempts (mirrors gosnmp retransmits).
+4. Output parses as two uint64 lines: rx → download, tx → upload. Baseline/delta/error-DataPoint logic is identical to the SNMP service (`counter.ComputeDelta`).
+5. Because SSH is connection-oriented, a failed poll closes the client and the next tick re-dials — this preserves SNMP-like "errors graph, then recovery" behavior. Reconnect failures after baseline also emit error DataPoints.
+
+**`FetchHostKey(*config.HostConfig) (string, error)`** — dials the host with no auth methods, captures the host key in the HostKeyCallback during key exchange, and returns its SHA256 fingerprint. The dial itself is expected to fail (auth) after the key is captured. Backs the `-hostkey` CLI mode.
 
 ---
 
@@ -227,13 +262,13 @@ Constants: `menuWidthDp = 120`, `menuItemHeightDp = 24`, `menuPaddingXDp = 8`.
 
 ### `dialog.go`
 
-**`RunSettingsDialog(mat, cfg, isDark) DialogResult`** — opens a second `app.Window` titled "Settings" (520×460 dp), runs its own Gio event loop, and blocks until the window is closed. Safe to call from any goroutine. Returns a `DialogResult{Saved bool, Config AppConfig}`.
+**`RunSettingsDialog(mat, cfg, isDark) DialogResult`** — opens a second `app.Window` titled "Settings" (520×640 dp), runs its own Gio event loop, and blocks until the window is closed. Safe to call from any goroutine. Returns a `DialogResult{Saved bool, Config HostConfig}`.
 
-**`settingsDialog`** — internal struct with `widget.Editor` fields for each `AppConfig` field (host, community, port, snmpVersion, dlOID, ulOID, timeoutMs, retries) and two `widget.Clickable` buttons (Save, Cancel).
+**`settingsDialog`** — internal struct with `widget.Editor` fields for each `HostConfig` field (name, host, protocol, port, community, dlOID, ulOID, username, keyFile, iface, hostKey, timeoutMs, retries) and two `widget.Clickable` buttons (Save, Cancel). All rows are always visible regardless of protocol.
 
 `Layout(gtx) dialogAction` — renders the form each frame; processes button clicks deferred from the previous frame; returns `dlgSave`, `dlgCancel`, or `dlgNone`.
 
-`validate()` — parses all editor text and returns a populated `AppConfig` plus any error strings. OIDs are validated by `isValidOID` (dotted-numeric, ≥ 2 components).
+`validate()` — parses all editor text and returns a populated `HostConfig` plus any error strings. Protocol must be `snmp1`/`snmp2c`/`ssh`. Community and OIDs are only validated for SNMP protocols (OIDs via `isValidOID`: dotted-numeric, ≥ 2 components); keyFile/interface are only required for ssh. Fields belonging to the protocol not in use are carried over unvalidated so switching protocols is non-destructive.
 
 When Save is clicked: validates, shows errors inline if invalid, otherwise sets `d.closing = true`, populates `result`, and calls `win.Perform(system.ActionClose)`.
 

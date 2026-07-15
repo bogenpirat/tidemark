@@ -1,6 +1,6 @@
 # Tidemark — Agent Guide
 
-Tidemark is a Windows desktop app that polls an SNMP v2c host every second and plots live upload/download throughput on a scrolling graph. It is designed to run as 3 simultaneous instances for 3 separate hosts.
+Tidemark is a Windows desktop app that polls hosts every second — via SNMP v1/v2c or via SSH (any Linux host, reading kernel interface counters) — and plots live upload/download throughput on a scrolling graph. It is designed to run as 3 simultaneous instances for 3 separate hosts.
 
 ## Quick facts
 
@@ -9,8 +9,9 @@ Tidemark is a Windows desktop app that polls an SNMP v2c host every second and p
 | Language | Go 1.26 |
 | GUI framework | Gio v0.10.0 (immediate-mode GPU, Direct3D on Windows) |
 | SNMP library | github.com/gosnmp/gosnmp v1.43.2 |
+| SSH library | golang.org/x/crypto/ssh |
 | Entry point | `main.go` |
-| Launch syntax | `tidemark.exe <config.json>` |
+| Launch syntax | `tidemark.exe [-hostkey] <config.json>` (`-hostkey` prints ssh host key fingerprints and exits) |
 | Build | `mage` (release) or `mage debug` — runs `go generate` then `go build`; see Building below |
 
 ## Building
@@ -52,7 +53,7 @@ All detailed documentation lives in `.agents/`:
 
 ```
 tidemark/
-├── main.go                        # Entry point, event loop, SNMP wiring
+├── main.go                        # Entry point, event loop, polling-service wiring
 ├── platform_windows.go            # Win32-specific init (strips WS_MAXIMIZEBOX)
 ├── platform.go                    # No-op stub for non-Windows builds
 ├── magefile.go                    # Build targets (tagged //go:build mage)
@@ -63,11 +64,14 @@ tidemark/
 ├── go.mod / go.sum
 ├── empoknor.json                  # Example config (real test host)
 └── internal/
-    ├── config/config.go           # AppConfig struct, JSON load/save
+    ├── config/config.go           # AppConfig/HostConfig structs, JSON load/save
     ├── model/datapoint.go         # DataPoint type
     ├── buffer/ringbuffer.go       # Generic fixed-capacity ring buffer
+    ├── counter/counter.go         # Shared wrap-aware counter delta computation
     ├── snmp/
     │   └── service.go             # SNMP polling goroutine
+    ├── sshpoll/
+    │   └── service.go             # SSH polling goroutine (Linux hosts, sysfs counters)
     ├── units/units.go             # Byte-rate formatting and axis scaling
     └── ui/
         ├── theme.go               # Theme struct, DarkTheme, LightTheme

@@ -4,6 +4,7 @@ package main
 
 import (
 	"image"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,9 @@ const (
 )
 
 var (
+	modKernel32       = syscall.NewLazyDLL("kernel32.dll")
+	procAttachConsole = modKernel32.NewProc("AttachConsole")
+
 	modUser32           = syscall.NewLazyDLL("user32.dll")
 	procGetWindowLongW  = modUser32.NewProc("GetWindowLongW")
 	procGetWindowLongPW = modUser32.NewProc("GetWindowLongPtrW")
@@ -36,6 +40,33 @@ var (
 	procGetWindowRect   = modUser32.NewProc("GetWindowRect")
 	procSetWindowPos    = modUser32.NewProc("SetWindowPos")
 )
+
+// AttachParentConsole attaches the process to its parent's console (if any)
+// and rebinds stdout/stderr to it. The release build is a windowsgui binary
+// that starts without a console, so CLI modes like -hostkey call this to make
+// their output visible when launched from a terminal. Best-effort: launched
+// from Explorer there is no parent console and the streams stay untouched.
+// Streams the shell already redirected to a file or pipe are valid handles and
+// are left alone.
+func AttachParentConsole() {
+	const attachParentProcess = uintptr(0xFFFFFFFF) // ATTACH_PARENT_PROCESS = (DWORD)-1
+	if ret, _, _ := procAttachConsole.Call(attachParentProcess); ret == 0 {
+		return
+	}
+	streamInvalid := func(f *os.File) bool {
+		return f == nil || f.Fd() == 0 || f.Fd() == uintptr(syscall.InvalidHandle)
+	}
+	if streamInvalid(os.Stdout) || streamInvalid(os.Stderr) {
+		if conOut, openError := os.OpenFile("CONOUT$", os.O_WRONLY, 0); openError == nil {
+			if streamInvalid(os.Stdout) {
+				os.Stdout = conOut
+			}
+			if streamInvalid(os.Stderr) {
+				os.Stderr = conOut
+			}
+		}
+	}
+}
 
 // atomicWin holds the Gio window for use from the WndProc goroutine.
 var atomicWin atomic.Pointer[app.Window]

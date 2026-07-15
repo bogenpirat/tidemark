@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -10,6 +12,7 @@ import (
 	"tidemark/internal/config"
 	"tidemark/internal/model"
 	snmpservice "tidemark/internal/snmp"
+	"tidemark/internal/sshpoll"
 	"tidemark/internal/ui"
 
 	"gioui.org/app"
@@ -41,13 +44,23 @@ type hostRuntime struct {
 }
 
 func main() {
+	fetchHostKeys := flag.Bool("hostkey", false,
+		"print the SSH host key fingerprint of each ssh host in the config, then exit")
+	flag.Parse()
+
+	if *fetchHostKeys {
+		// The release build is a windowsgui binary with no console; attach to
+		// the parent's so the fingerprints are visible in the terminal. Must
+		// happen before setupLogging captures os.Stdout.
+		AttachParentConsole()
+	}
 	setupLogging()
 
-	if len(os.Args) < 2 {
-		slog.Error("no config file specified", "usage", "tidemark.exe <config.json>")
+	if flag.NArg() < 1 {
+		slog.Error("no config file specified", "usage", "tidemark.exe [-hostkey] <config.json>")
 		os.Exit(1)
 	}
-	configFilePath := os.Args[1]
+	configFilePath := flag.Arg(0)
 
 	slog.Info("loading configuration", "path", configFilePath)
 	appConfig, loadError := config.LoadConfig(configFilePath)
@@ -56,6 +69,10 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("configuration loaded", "hosts", len(appConfig.Hosts))
+
+	if *fetchHostKeys {
+		os.Exit(printHostKeys(appConfig))
+	}
 
 	isDarkTheme := true
 	if appConfig.DarkTheme != nil {
@@ -106,7 +123,7 @@ func main() {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		runtime.cancel = cancel
-		go snmpservice.NewService(&appConfig.Hosts[hostIndex]).Start(ctx, runtime.outChan)
+		startHostService(ctx, &appConfig.Hosts[hostIndex], runtime.outChan)
 	}
 
 	initialWidthDp := appConfig.WindowWidthDp
@@ -210,7 +227,7 @@ func main() {
 					if saveErr := config.SaveConfig(configFilePath, appConfig); saveErr != nil {
 						slog.Error("failed to save config", "err", saveErr)
 					}
-					// Restart this host's SNMP service with the new settings and a
+					// Restart this host's polling service with the new settings and a
 					// fresh buffer; other hosts keep running untouched.
 					runtime.cancel()
 					ctx, cancel := context.WithCancel(context.Background())
@@ -218,7 +235,7 @@ func main() {
 					newBuffer := buffer.New[model.DataPoint](maxBufferSeconds)
 					runtime.buffer = newBuffer
 					runtime.state.DataBuffer = newBuffer
-					go snmpservice.NewService(&appConfig.Hosts[dialogHostIndex]).Start(ctx, runtime.outChan)
+					startHostService(ctx, &appConfig.Hosts[dialogHostIndex], runtime.outChan)
 				}
 			default:
 			}
@@ -263,6 +280,47 @@ func main() {
 				os.Exit(0)
 			}
 		}
+	}
+}
+
+// printHostKeys implements the -hostkey CLI mode: it fetches and prints the
+// SSH host key fingerprint of every ssh host in the config, then returns the
+// process exit code. The printed fingerprint is the value to paste into the
+// host's "hostKey" config field.
+func printHostKeys(appConfig *config.AppConfig) int {
+	exitCode := 0
+	sshHostCount := 0
+	for hostIndex := range appConfig.Hosts {
+		hostCfg := &appConfig.Hosts[hostIndex]
+		if hostCfg.Protocol != config.ProtocolSSH {
+			continue
+		}
+		sshHostCount++
+		fingerprint, fetchError := sshpoll.FetchHostKey(hostCfg)
+		if fetchError != nil {
+			fmt.Fprintf(os.Stderr, "%s (%s:%d): error: %v\n",
+				hostCfg.DisplayName(), hostCfg.Host, hostCfg.Port, fetchError)
+			exitCode = 1
+			continue
+		}
+		fmt.Printf("%s (%s:%d): %s\n",
+			hostCfg.DisplayName(), hostCfg.Host, hostCfg.Port, fingerprint)
+	}
+	if sshHostCount == 0 {
+		fmt.Fprintln(os.Stderr, "no ssh hosts in config")
+		return 1
+	}
+	return exitCode
+}
+
+// startHostService launches the polling goroutine matching the host's
+// protocol. Both services share the same Start signature and DataPoint
+// semantics.
+func startHostService(ctx context.Context, hostCfg *config.HostConfig, out chan<- model.DataPoint) {
+	if hostCfg.Protocol == config.ProtocolSSH {
+		go sshpoll.NewService(hostCfg).Start(ctx, out)
+	} else {
+		go snmpservice.NewService(hostCfg).Start(ctx, out)
 	}
 }
 

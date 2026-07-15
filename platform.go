@@ -16,3 +16,5 @@ func TakeRightClick() (bool, image.Point) { return false, image.Point{} }
 func SetInitialWindowPos(x, y int) {}
 
 func GetWindowPosition() (x int, y int, ok bool) { return 0, 0, false }
+
+func AttachParentConsole() {}

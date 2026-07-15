@@ -6,20 +6,46 @@ import (
 	"os"
 )
 
-// HostConfig holds the SNMP polling configuration for a single monitored
-// target. One of these exists per element of AppConfig.Hosts.
+// Protocol values accepted in HostConfig.Protocol.
+const (
+	ProtocolSNMP1  = "snmp1"
+	ProtocolSNMP2c = "snmp2c"
+	ProtocolSSH    = "ssh"
+)
+
+// HostConfig holds the polling configuration for a single monitored target.
+// One of these exists per element of AppConfig.Hosts. Which fields are
+// required depends on Protocol: SNMP hosts need a community string and OIDs,
+// SSH hosts need a key file and an interface name.
 type HostConfig struct {
 	Host string `json:"host"`
 	// Name is an optional human-friendly label shown on the graph instead of the
 	// raw host address. When empty, Host is displayed.
-	Name        string `json:"name,omitempty"`
-	Community   string `json:"community"`
-	Port        uint16 `json:"port"`
-	SNMPVersion string `json:"snmpVersion"`
-	DownloadOID string `json:"downloadOID"`
-	UploadOID   string `json:"uploadOID"`
-	TimeoutMs   int    `json:"timeoutMs"`
-	Retries     int    `json:"retries"`
+	Name     string `json:"name,omitempty"`
+	Protocol string `json:"protocol"`
+	Port     uint16 `json:"port"`
+
+	// SNMP-only fields.
+	Community   string `json:"community,omitempty"`
+	DownloadOID string `json:"downloadOID,omitempty"`
+	UploadOID   string `json:"uploadOID,omitempty"`
+
+	// SSH-only fields.
+	Username  string `json:"username,omitempty"`
+	KeyFile   string `json:"keyFile,omitempty"`
+	Interface string `json:"interface,omitempty"`
+	// HostKey is the expected SHA256 fingerprint of the server's host key.
+	// When empty, any host key is accepted (the fingerprint is logged so it
+	// can be pinned here).
+	HostKey string `json:"hostKey,omitempty"`
+
+	TimeoutMs int `json:"timeoutMs"`
+	Retries   int `json:"retries"`
+}
+
+// IsSNMP reports whether this host is polled via SNMP.
+func (host *HostConfig) IsSNMP() bool {
+	return host.Protocol == ProtocolSNMP1 || host.Protocol == ProtocolSNMP2c
 }
 
 // AppConfig holds general, program-wide configuration plus the list of
@@ -85,27 +111,49 @@ func LoadConfig(filePath string) (*AppConfig, error) {
 }
 
 // applyHostDefaults validates a single host's required fields and fills in
-// defaults for any omitted optional fields.
+// defaults for any omitted optional fields. Requirements and defaults depend
+// on the host's protocol.
 func applyHostDefaults(host *HostConfig) error {
 	if host.Host == "" {
 		return fmt.Errorf("config field \"host\" is required")
 	}
-	if host.Community == "" {
-		return fmt.Errorf("config field \"community\" is required")
+
+	if host.Protocol == "" {
+		host.Protocol = ProtocolSNMP2c
 	}
 
-	if host.Port == 0 {
-		host.Port = 161
+	switch host.Protocol {
+	case ProtocolSNMP1, ProtocolSNMP2c:
+		if host.Community == "" {
+			return fmt.Errorf("config field \"community\" is required for SNMP hosts")
+		}
+		if host.Port == 0 {
+			host.Port = 161
+		}
+		if host.DownloadOID == "" {
+			host.DownloadOID = "1.3.6.1.2.1.31.1.1.1.6.1"
+		}
+		if host.UploadOID == "" {
+			host.UploadOID = "1.3.6.1.2.1.31.1.1.1.10.1"
+		}
+	case ProtocolSSH:
+		if host.KeyFile == "" {
+			return fmt.Errorf("config field \"keyFile\" is required for SSH hosts")
+		}
+		if host.Interface == "" {
+			return fmt.Errorf("config field \"interface\" is required for SSH hosts")
+		}
+		if host.Port == 0 {
+			host.Port = 22
+		}
+		if host.Username == "" {
+			host.Username = "root"
+		}
+	default:
+		return fmt.Errorf("config field \"protocol\" must be %q, %q, or %q (got %q)",
+			ProtocolSNMP1, ProtocolSNMP2c, ProtocolSSH, host.Protocol)
 	}
-	if host.SNMPVersion == "" {
-		host.SNMPVersion = "2c"
-	}
-	if host.DownloadOID == "" {
-		host.DownloadOID = "1.3.6.1.2.1.31.1.1.1.6.1"
-	}
-	if host.UploadOID == "" {
-		host.UploadOID = "1.3.6.1.2.1.31.1.1.1.10.1"
-	}
+
 	if host.TimeoutMs == 0 {
 		host.TimeoutMs = 3000
 	}
